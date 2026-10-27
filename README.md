@@ -17,7 +17,7 @@ A calmer replacement for Instagram and other image-heavy social apps: something 
   Science & health and Sports. The News sources screen switches a whole category or single sites on and off
   (`NEWS_FEEDS` in `data/NewsRepository.kt`). Sites marked "full" send whole articles; the rest send a headline and
   summary with a "Hold for full article ↗" link (a long press, so a stray tap never leaves the app). Feeds are read straight from the publishers.
-- A News / Stories switch above the cards picks what to deal; the ☰ menu picks the story length (All, Quick or Long).
+- A News / Reddit / Stories switch above the cards picks what to deal; the ☰ menu picks the Reddit story length (All, Quick or Long). Stories are written for Kissa by its authors, newest first.
 - Share (top bar, or on a Liked item) draws the card as an image (`share/CardSharer.kt`) and opens Android's share
   sheet with the image plus the headline and link, so it works for Instagram as well as WhatsApp, X and Messages.
 - Optional account (☰ → Account): sign in with a 6-digit code sent by email, and liked cards, sources, settings and the
@@ -90,6 +90,12 @@ cd relay && npx wrangler deploy
 ```
 ```bash
 cd relay && npx wrangler d1 migrations apply kissa --remote
+```
+Kissa's own stories (the Stories tab) are in the `stories` table and served by `relay/src/stories.js`; each also has a
+web page at `/s/<id>` for share links. Only authors can post: they get a **Write a story** item in the menu. An account
+becomes an author by hand, after signing in once:
+```bash
+cd relay && npx wrangler d1 execute kissa --remote --command "UPDATE users SET is_author = 1 WHERE email = 'you@example.com'"
 ```
 Query the data, for example the most liked subreddits:
 ```bash

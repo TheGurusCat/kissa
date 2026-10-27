@@ -16,6 +16,7 @@ import com.theguruscat.kissa.data.QUICK_READ_SUBREDDITS
 import com.theguruscat.kissa.data.isQuickReadSubreddit
 import com.theguruscat.kissa.data.RedditPost
 import com.theguruscat.kissa.data.RedditRepository
+import com.theguruscat.kissa.data.StoriesRepository
 import com.theguruscat.kissa.data.newsFeed
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -45,26 +46,32 @@ enum class ReadMode(val label: String) {
     Mixed("All"),
     Long("Long"),
     News("News"),
+    /** Kissa's own stories, posted by authors through the relay. */
+    Original("Stories"),
     ;
 
     fun allows(post: RedditPost) = when (this) {
         Quick -> post.isQuickRead
-        Mixed -> !post.isNews
-        Long -> !post.isNews && !post.isQuickRead
+        Mixed -> post.isReddit
+        Long -> post.isReddit && !post.isQuickRead
         News -> post.isNews
+        Original -> post.isOriginal
     }
 
     fun allowsSubreddit(name: String) = when (this) {
         Quick -> isQuickReadSubreddit(name)
         Mixed -> true
         Long -> !isQuickReadSubreddit(name)
-        News -> false
+        News, Original -> false
     }
 
     val includesNews: Boolean get() = this == News
 
+    /** One of the Reddit story lengths in [STORY_MODES]. */
+    val isReddit: Boolean get() = this in STORY_MODES
+
     companion object {
-        /** The story lengths offered under Stories. */
+        /** The story lengths offered under Reddit. */
         val STORY_MODES = listOf(Mixed, Quick, Long)
     }
 }
@@ -80,6 +87,16 @@ data class AccountState(
     val isBusy: Boolean = false,
     val error: String? = null,
     val lastSyncedAt: Long = 0L,
+    /** Can post Kissa stories (the Write screen). */
+    val isAuthor: Boolean = false,
+)
+
+/** The author's Write screen: their published stories and whether a save is under way. */
+data class WritingState(
+    val stories: List<RedditPost> = emptyList(),
+    val isLoading: Boolean = false,
+    val isSaving: Boolean = false,
+    val error: String? = null,
 )
 
 data class SwipeUiState(
@@ -101,10 +118,11 @@ data class SwipeUiState(
     val isCheckingSubreddit: Boolean = false,
     val subredditError: String? = null,
     val readMode: ReadMode = ReadMode.Mixed,
-    // The story length the Stories tab goes back to; never News.
+    // The story length the Reddit tab goes back to; always one of ReadMode.STORY_MODES.
     val storyMode: ReadMode = ReadMode.Mixed,
     val showSwipeHint: Boolean = false,
     val account: AccountState = AccountState(),
+    val writing: WritingState = WritingState(),
 ) {
     /** The cards the swipe screen shows: the deck narrowed to the current [readMode]. */
     val visibleDeck: List<RedditPost> get() = deck.filter(readMode::allows)
@@ -123,6 +141,7 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
     private val news = NewsRepository()
     private val store = LocalStore(app)
     private val account = AccountRepository(app)
+    private val stories = StoriesRepository(account)
     private val sync = AccountSync(account, ::syncSnapshot, ::syncFingerprint, ::applySyncSnapshot)
 
     private val _state = MutableStateFlow(
@@ -134,7 +153,7 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
             readMode = ReadMode.entries.firstOrNull { it.name == store.readMode } ?: ReadMode.Mixed,
             storyMode = ReadMode.STORY_MODES.firstOrNull { it.name == (store.storyMode ?: store.readMode) } ?: ReadMode.Mixed,
             showSwipeHint = !store.swipeHintDone,
-            account = AccountState(email = account.email, lastSyncedAt = account.syncedAt),
+            account = AccountState(email = account.email, lastSyncedAt = account.syncedAt, isAuthor = account.isAuthor),
         ),
     )
     val state: StateFlow<SwipeUiState> = _state.asStateFlow()
@@ -239,11 +258,11 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setReadMode(mode: ReadMode) {
         store.readMode = mode.name
-        if (mode != ReadMode.News) store.storyMode = mode.name
+        if (mode.isReddit) store.storyMode = mode.name
         _state.update {
             it.copy(
                 readMode = mode,
-                storyMode = if (mode == ReadMode.News) it.storyMode else mode,
+                storyMode = if (mode.isReddit) mode else it.storyMode,
                 error = null,
                 isExhausted = false,
             )
@@ -348,7 +367,7 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
         val email = _state.value.account.pendingEmail ?: return
         accountAction {
             account.verifyCode(email, code.trim())
-            _state.update { it.copy(account = AccountState(email = account.email, isBusy = true)) }
+            _state.update { it.copy(account = AccountState(email = account.email, isBusy = true, isAuthor = account.isAuthor)) }
             // The first sync merges this phone's likes into the account rather than replacing either side.
             runSync(firstTime = true, quiet = false)
         }
@@ -388,7 +407,7 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
         lastSyncAttempt = SystemClock.elapsedRealtime()
         try {
             if (sync.sync(firstTime, forceUpload)) seenAtUpload = seen.size
-            _state.update { it.copy(account = it.account.copy(lastSyncedAt = account.syncedAt)) }
+            _state.update { it.copy(account = it.account.copy(lastSyncedAt = account.syncedAt, isAuthor = account.isAuthor)) }
         } catch (e: SignedOutException) {
             _state.update { it.copy(account = AccountState(error = e.message)) }
             if (!quiet) throw e
@@ -481,7 +500,7 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
                     serif = settings?.optBoolean("serif", state.reading.serif) ?: state.reading.serif,
                 ),
                 storyMode = storyMode,
-                readMode = if (state.readMode == ReadMode.News) ReadMode.News else storyMode,
+                readMode = if (state.readMode.isReddit) storyMode else state.readMode,
             )
             // Cards the other phone already swiped leave this deck too.
             updated.copy(deck = updated.deck.filter { card -> updated.allows(card) && card.seenKeys.none(seen::contains) })
@@ -531,6 +550,7 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(isDownloading = true) }
         viewModelScope.launch {
             fetchRound(ReadMode.News)
+            fetchRound(ReadMode.Original)
             repeat(OFFLINE_ROUNDS) { fetchRound(ReadMode.Mixed) }
             _state.update { it.copy(isDownloading = false) }
             persistAll(_state.value)
@@ -542,6 +562,7 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
      * message if nothing came back.
      */
     private suspend fun fetchRound(mode: ReadMode): String? = fetchMutex.withLock {
+        if (mode == ReadMode.Original) return@withLock fetchOriginals()
         val subreddits = _state.value.subreddits.filter(mode::allowsSubreddit)
         val feeds = if (mode.includesNews) _state.value.newsFeeds.mapNotNull(::newsFeed) else emptyList()
         if (subreddits.isEmpty() && feeds.isEmpty()) return "Add some subreddits or news sources in the menu"
@@ -564,6 +585,91 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (added > 0) null
         else results.firstNotNullOfOrNull { it.exceptionOrNull()?.message } ?: NO_NEW_STORIES
+    }
+
+    /**
+     * Adds Kissa stories not read yet, newest first, paging back through older ones until it finds some;
+     * returns an error message if none came back.
+     */
+    private suspend fun fetchOriginals(): String? {
+        var before: Long? = null
+        repeat(ORIGINAL_PAGES) {
+            val page = try {
+                stories.fetch(before)
+            } catch (e: Exception) {
+                return e.message ?: "Couldn't load stories"
+            }
+            if (page.isEmpty()) return NO_NEW_STORIES
+            var added = 0
+            _state.update { state ->
+                val inDeck = state.deck.flatMapTo(HashSet()) { it.seenKeys }
+                val fresh = page.filter { post -> post.seenKeys.none { it in seen || it in inDeck } }
+                added = fresh.size
+                state.copy(deck = state.deck.withOriginals(state.deck.filter { it.isOriginal } + fresh))
+            }
+            if (added > 0) return null
+            before = page.last().publishedAt
+        }
+        return NO_NEW_STORIES
+    }
+
+    /** This deck with its Kissa stories replaced by [originals], kept newest first. */
+    private fun List<RedditPost>.withOriginals(originals: List<RedditPost>): List<RedditPost> =
+        filterNot { it.isOriginal } + originals.sortedByDescending { it.publishedAt }
+
+    // --- Writing Kissa stories (authors only; see StoriesRepository) ---
+
+    fun loadMyStories() {
+        _state.update { it.copy(writing = it.writing.copy(isLoading = true, error = null)) }
+        viewModelScope.launch {
+            val result = runCatching { stories.fetch(limit = 100) }
+            _state.update {
+                it.copy(
+                    writing = it.writing.copy(
+                        stories = result.getOrDefault(it.writing.stories),
+                        isLoading = false,
+                        error = result.exceptionOrNull()?.message,
+                    ),
+                )
+            }
+        }
+    }
+
+    /** Publishes a new story, or saves edits to [id]; calls [onSaved] once it's on the server. */
+    fun saveStory(id: String?, title: String, body: String, onSaved: () -> Unit) {
+        if (_state.value.writing.isSaving) return
+        _state.update { it.copy(writing = it.writing.copy(isSaving = true, error = null)) }
+        viewModelScope.launch {
+            val result = runCatching { stories.save(id, title.trim(), body.trim()) }
+            val story = result.getOrNull()
+            _state.update { state ->
+                if (story == null) {
+                    return@update state.copy(writing = state.writing.copy(isSaving = false, error = result.exceptionOrNull()?.message))
+                }
+                val mine = listOf(story) + state.writing.stories.filterNot { it.id == story.id }
+                state.copy(
+                    writing = state.writing.copy(stories = mine.sortedByDescending { it.publishedAt }, isSaving = false),
+                    // An edit shows at once if the card is still in the deck; a new story waits for the next fetch.
+                    deck = state.deck.map { if (it.id == story.id) story else it },
+                    saved = state.saved.map { if (it.id == story.id) story else it },
+                )
+            }
+            if (story != null) onSaved()
+        }
+    }
+
+    fun deleteStory(post: RedditPost) {
+        _state.update { it.copy(writing = it.writing.copy(isSaving = true, error = null)) }
+        viewModelScope.launch {
+            val error = runCatching { stories.delete(post.id) }.exceptionOrNull()?.message
+            _state.update { state ->
+                if (error != null) return@update state.copy(writing = state.writing.copy(isSaving = false, error = error))
+                state.copy(
+                    writing = state.writing.copy(stories = state.writing.stories - post, isSaving = false),
+                    deck = state.deck.filterNot { it.id == post.id },
+                )
+            }
+        }
     }
 
     /** Saves to disk shortly after things change; the deck is large, so it waits longer. */
@@ -595,6 +701,7 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun SwipeUiState.allows(post: RedditPost): Boolean = when {
         post.isNews -> post.subreddit in newsFeeds && !post.isStaleNews()
+        post.isOriginal -> true
         else -> (showNsfw || !post.isNsfw) && subreddits.any { it.equals(post.subreddit, ignoreCase = true) }
     }
 
@@ -639,6 +746,8 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
         // Two keys per swiped story (ID and title), so about 5000 stories.
         private const val MAX_SEEN = 10000
         private const val OFFLINE_ROUNDS = 3
+        // Pages of 50 Kissa stories to look back through for unread ones.
+        private const val ORIGINAL_PAGES = 5
         private const val NO_NEW_STORIES = "No new stories found"
         // A card left open longer than this (phone set down) only counts this much.
         private const val MAX_READING_MS = 20 * 60 * 1000L

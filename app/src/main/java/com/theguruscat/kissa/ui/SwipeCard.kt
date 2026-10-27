@@ -319,7 +319,7 @@ fun SwipeCard(
 
 private fun footerText(post: RedditPost, isShort: Boolean): String {
     val length = if (isShort) (if (post.isNews) "Headline" else "Quick read") else "${post.readMinutes} min read"
-    if (!post.isNews) return "$length  ·  ▲ ${post.score}  ·  ${post.numComments} comments"
+    if (post.isReddit) return "$length  ·  ▲ ${post.score}  ·  ${post.numComments} comments"
     if (post.publishedAt <= 0L) return length
     val age = DateUtils.getRelativeTimeSpanString(
         post.publishedAt,

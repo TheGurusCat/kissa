@@ -50,7 +50,7 @@ fun FeedEndCard(
     modifier: Modifier = Modifier,
 ) {
     when {
-        state.modeSubreddits.isEmpty() && state.modeNewsFeeds.isEmpty() -> MessageCard(
+        state.readMode != ReadMode.Original && state.modeSubreddits.isEmpty() && state.modeNewsFeeds.isEmpty() -> MessageCard(
             icon = Icons.Filled.Forum,
             title = when {
                 state.readMode == ReadMode.News -> "No news sources"
@@ -81,8 +81,11 @@ fun FeedEndCard(
         else -> MessageCard(
             icon = Icons.Filled.DoneAll,
             title = "You're all caught up",
-            detail = if (state.isExhausted) "No new stories right now. Check back later, or add more sources."
-            else "That's everything loaded for now.",
+            detail = when {
+                state.readMode == ReadMode.Original -> "You've read every Kissa story. New ones show up here when they're posted."
+                state.isExhausted -> "No new stories right now. Check back later, or add more sources."
+                else -> "That's everything loaded for now."
+            },
             action = "Check for new stories",
             onAction = onRetry,
             modifier = modifier,

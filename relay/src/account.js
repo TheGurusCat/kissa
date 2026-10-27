@@ -2,9 +2,9 @@
 // settings and daily reading stats across phones.
 //
 //   POST /auth/code    {email}          emails a code (one per minute per address, valid 10 minutes)
-//   POST /auth/verify  {email, code}    returns {token, email}; 5 wrong tries and the code is void
+//   POST /auth/verify  {email, code}    returns {token, email, isAuthor}; 5 wrong tries and the code is void
 //   POST /auth/signout                  ends this session
-//   GET  /sync                          returns {data, updatedAt} (data is null before the first upload)
+//   GET  /sync                          returns {data, updatedAt, isAuthor} (data is null before the first upload)
 //   PUT  /sync         {data, updatedAt} replaces the account's data with this snapshot
 //
 // The app still sends and receives one JSON snapshot; here it is split into D1 tables (DB binding, schema in
@@ -37,7 +37,7 @@ export async function handleAccount(request, env, url) {
   }
 }
 
-class HttpError extends Error {
+export class HttpError extends Error {
   constructor(status, message) {
     super(message);
     this.status = status;
@@ -95,7 +95,7 @@ async function verifyCode(request, env) {
   }
   const user = await env.DB.prepare(
     `INSERT INTO users (email, created_at, last_seen_at) VALUES (?, ?, ?)
-     ON CONFLICT(email) DO UPDATE SET last_seen_at = excluded.last_seen_at RETURNING id`,
+     ON CONFLICT(email) DO UPDATE SET last_seen_at = excluded.last_seen_at RETURNING id, is_author`,
   ).bind(email, now, now).first();
   const token = hex(crypto.getRandomValues(new Uint8Array(32)));
   await env.DB.batch([
@@ -105,7 +105,7 @@ async function verifyCode(request, env) {
     // Expired sessions of anyone are cleared now and then, on sign-in.
     env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
   ]);
-  return json({ token, email }, 200);
+  return json({ token, email, isAuthor: !!user.is_author }, 200);
 }
 
 async function signOut(request, env) {
@@ -116,9 +116,10 @@ async function signOut(request, env) {
 
 async function getSnapshot(request, env) {
   const userId = await requireSession(request, env);
-  const user = await env.DB.prepare("SELECT synced_at, subreddits, news_feeds, settings, seen FROM users WHERE id = ?")
+  const user = await env.DB.prepare("SELECT synced_at, subreddits, news_feeds, settings, seen, is_author FROM users WHERE id = ?")
     .bind(userId).first();
-  if (!user.synced_at) return json({ data: null, updatedAt: 0 }, 200);
+  const isAuthor = !!user.is_author;
+  if (!user.synced_at) return json({ data: null, updatedAt: 0, isAuthor }, 200);
   const [likes, stats] = await env.DB.batch([
     env.DB.prepare("SELECT * FROM likes WHERE user_id = ? ORDER BY position").bind(userId),
     env.DB.prepare("SELECT day, stories, seconds FROM daily_stats WHERE user_id = ?").bind(userId),
@@ -135,6 +136,7 @@ async function getSnapshot(request, env) {
       permalink: row.permalink,
       isNsfw: !!row.is_nsfw,
       isNews: !!row.is_news,
+      isOriginal: !!row.is_original,
       publishedAt: row.published_at,
     })),
     stats: Object.fromEntries(stats.results.map((row) => [row.day, { stories: row.stories, seconds: row.seconds }])),
@@ -143,7 +145,7 @@ async function getSnapshot(request, env) {
   for (const [key, column] of [["subreddits", "subreddits"], ["newsFeeds", "news_feeds"], ["settings", "settings"], ["seen", "seen"]]) {
     if (user[column] != null) data[key] = JSON.parse(user[column]);
   }
-  return json({ data, updatedAt: user.synced_at }, 200);
+  return json({ data, updatedAt: user.synced_at, isAuthor }, 200);
 }
 
 async function putSnapshot(request, env) {
@@ -192,14 +194,14 @@ function snapshotStatements(db, userId, data, updatedAt, now) {
     liked.forEach((post, position) => statements.push(
       db.prepare(
         `INSERT INTO likes (user_id, post_id, position, liked_at, subreddit, title, body, author, score, num_comments,
-           permalink, is_nsfw, is_news, published_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           permalink, is_nsfw, is_news, is_original, published_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, post_id) DO UPDATE SET position = excluded.position, title = excluded.title,
            body = excluded.body, score = excluded.score, num_comments = excluded.num_comments`,
       ).bind(
         userId, post.id, position, now, post.subreddit, post.title, String(post.body ?? ""), String(post.author ?? ""),
         int(post.score), int(post.numComments), post.permalink, post.isNsfw ? 1 : 0, post.isNews ? 1 : 0,
-        int(post.publishedAt),
+        post.isOriginal ? 1 : 0, int(post.publishedAt),
       ),
     ));
   }
@@ -231,7 +233,7 @@ function int(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
-async function requireSession(request, env) {
+export async function requireSession(request, env) {
   const token = bearer(request);
   const session = token && await env.DB.prepare("SELECT user_id, expires_at FROM sessions WHERE token_hash = ?")
     .bind(await sha256(token)).first();
@@ -250,7 +252,7 @@ function normalizeEmail(value) {
   return email;
 }
 
-async function readJson(request) {
+export async function readJson(request) {
   try {
     return await request.json();
   } catch {

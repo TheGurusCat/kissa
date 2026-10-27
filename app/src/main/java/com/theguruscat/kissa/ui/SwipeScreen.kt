@@ -145,7 +145,8 @@ fun SwipeScreen(
         }
     }
 
-    Column(modifier.fillMaxSize().padding(16.dp)) {
+    // No top padding: the switch sits right under the title bar.
+    Column(modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
         ReadModeSwitch(
             mode = state.readMode,
             storyMode = state.storyMode,
@@ -229,13 +230,14 @@ private fun ReadModeSwitch(
     onChange: (ReadMode) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val isNews = mode == ReadMode.News
+    // Reddit goes back to the last story length picked in the menu.
+    val tabs = listOf(ReadMode.News to "News", storyMode to "Reddit", ReadMode.Original to "Stories")
     SingleChoiceSegmentedButtonRow(modifier.widthIn(max = MaxCardWidth).fillMaxWidth()) {
-        listOf(true to "News", false to "Stories").forEachIndexed { index, (news, label) ->
+        tabs.forEachIndexed { index, (tab, label) ->
             SegmentedButton(
-                selected = news == isNews,
-                onClick = { onChange(if (news) ReadMode.News else storyMode) },
-                shape = SegmentedButtonDefaults.itemShape(index, 2),
+                selected = if (tab.isReddit) mode.isReddit else mode == tab,
+                onClick = { onChange(tab) },
+                shape = SegmentedButtonDefaults.itemShape(index, tabs.size),
                 // No checkmark: the fill already shows the choice.
                 icon = {},
                 label = { Text(label, maxLines = 1) },

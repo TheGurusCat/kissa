@@ -3,8 +3,9 @@ package com.theguruscat.kissa.data
 import org.json.JSONObject
 
 /**
- * One card: a Reddit text post, or a news article when [isNews] is set. For news, [subreddit] holds the
- * feed's name (see [NEWS_FEEDS]) and [permalink] the article's full URL.
+ * One card: a Reddit text post, a news article when [isNews] is set, or one of Kissa's own stories when
+ * [isOriginal] is set. For news, [subreddit] holds the feed's name (see [NEWS_FEEDS]); for news and Kissa
+ * stories, [permalink] is the full URL.
  */
 data class RedditPost(
     val id: String,
@@ -19,14 +20,19 @@ data class RedditPost(
     val isNews: Boolean = false,
     /** When the article was published, in epoch milliseconds; 0 for Reddit posts and unknown dates. */
     val publishedAt: Long = 0L,
+    /** Written for Kissa and posted through the relay (the Stories tab), not from Reddit or a news site. */
+    val isOriginal: Boolean = false,
 ) {
-    val url: String get() = if (isNews) permalink else "https://www.reddit.com$permalink"
+    val url: String get() = if (isNews || isOriginal) permalink else "https://www.reddit.com$permalink"
 
-    /** Where the card came from, as shown above it: "r/tifu" or "BBC News". */
-    val sourceLabel: String get() = if (isNews) subreddit else "r/$subreddit"
+    /** Where the card came from, as shown above it: "r/tifu", "BBC News" or "Kissa". */
+    val sourceLabel: String get() = if (isNews || isOriginal) subreddit else "r/$subreddit"
+
+    /** A Reddit post: neither news nor a Kissa story. */
+    val isReddit: Boolean get() = !isNews && !isOriginal
 
     /** From a subreddit of short posts (see [QUICK_READ_SUBREDDITS]) rather than a story subreddit. */
-    val isQuickRead: Boolean by lazy { !isNews && isQuickReadSubreddit(subreddit) }
+    val isQuickRead: Boolean by lazy { isReddit && isQuickReadSubreddit(subreddit) }
 
     /**
      * Identifies the same story under another ID: a Reddit crosspost, or one article in two feeds (BBC News
@@ -63,6 +69,7 @@ data class RedditPost(
         .put("isNsfw", isNsfw)
         .put("isNews", isNews)
         .put("publishedAt", publishedAt)
+        .put("isOriginal", isOriginal)
 
     companion object {
         private val WHITESPACE = Regex("\\s+")
@@ -79,6 +86,7 @@ data class RedditPost(
             isNsfw = json.optBoolean("isNsfw"),
             isNews = json.optBoolean("isNews"),
             publishedAt = json.optLong("publishedAt"),
+            isOriginal = json.optBoolean("isOriginal"),
         )
     }
 }

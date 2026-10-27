@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Menu
@@ -66,6 +67,7 @@ import com.theguruscat.kissa.ui.StatsScreen
 import com.theguruscat.kissa.ui.SwipeBackContainer
 import com.theguruscat.kissa.ui.SubredditsScreen
 import com.theguruscat.kissa.ui.SwipeScreen
+import com.theguruscat.kissa.ui.WriteScreen
 import com.theguruscat.kissa.ui.theme.KissaTheme
 import com.theguruscat.kissa.update.UpdateDialog
 import com.theguruscat.kissa.update.UpdateViewModel
@@ -77,6 +79,8 @@ enum class Screen(val title: String, val icon: ImageVector) {
     News("News sources", Icons.Filled.Newspaper),
     Subreddits("Subreddits", Icons.Filled.Forum),
     Stats("Stats", Icons.Filled.BarChart),
+    // Shown only to authors.
+    Write("Write a story", Icons.Filled.Edit),
     Account("Account", Icons.Filled.AccountCircle),
     Settings("Settings", Icons.Filled.Settings),
 }
@@ -124,7 +128,7 @@ class MainActivity : ComponentActivity() {
                                         style = MaterialTheme.typography.titleLarge,
                                         modifier = Modifier.padding(start = 28.dp, top = 24.dp, bottom = 16.dp),
                                     )
-                                    Screen.entries.forEach { item ->
+                                    Screen.entries.filter { it != Screen.Write || state.account.isAuthor }.forEach { item ->
                                         NavigationDrawerItem(
                                             label = { Text(item.title) },
                                             icon = { Icon(item.icon, contentDescription = null) },
@@ -138,12 +142,12 @@ class MainActivity : ComponentActivity() {
                                     }
                                     HorizontalDivider(Modifier.padding(horizontal = 28.dp, vertical = 16.dp))
                                     Text(
-                                        "Story length",
+                                        "Reddit story length",
                                         style = MaterialTheme.typography.titleSmall,
                                         color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.padding(start = 28.dp, bottom = 8.dp),
                                     )
-                                    // Picking a length opens Stories at that length.
+                                    // Picking a length opens Reddit at that length.
                                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
                                         ReadMode.STORY_MODES.forEachIndexed { index, mode ->
                                             SegmentedButton(
@@ -251,6 +255,12 @@ class MainActivity : ComponentActivity() {
                                                     onRestoreDefaults = vm::restoreDefaultSubreddits,
                                                 )
                                                 Screen.Stats -> StatsScreen(stats = state.stats)
+                                                Screen.Write -> WriteScreen(
+                                                    writing = state.writing,
+                                                    onLoad = vm::loadMyStories,
+                                                    onSave = vm::saveStory,
+                                                    onDelete = vm::deleteStory,
+                                                )
                                                 Screen.Account -> AccountScreen(
                                                     account = state.account,
                                                     onRequestCode = vm::requestSignInCode,

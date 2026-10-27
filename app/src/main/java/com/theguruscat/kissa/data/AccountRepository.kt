@@ -21,6 +21,9 @@ class AccountRepository(context: Context) {
 
     val isSignedIn: Boolean get() = prefs.getString("token", null) != null
 
+    /** This account can post Kissa stories; the server says so on sign-in and on every sync. */
+    val isAuthor: Boolean get() = prefs.getBoolean("is_author", false)
+
     /** The server's updatedAt for the snapshot this phone last uploaded or applied. */
     var syncedAt: Long
         get() = prefs.getLong("synced_at", 0L)
@@ -41,6 +44,7 @@ class AccountRepository(context: Context) {
             .clear()
             .putString("token", result.getString("token"))
             .putString("email", result.getString("email"))
+            .putBoolean("is_author", result.optBoolean("isAuthor"))
             .apply()
     }
 
@@ -53,6 +57,7 @@ class AccountRepository(context: Context) {
     /** The account's snapshot and when it was uploaded; null data before the first upload. */
     suspend fun download(): Pair<JSONObject?, Long> {
         val result = call("GET", "/sync", null)
+        prefs.edit().putBoolean("is_author", result.optBoolean("isAuthor")).apply()
         return result.optJSONObject("data") to result.optLong("updatedAt")
     }
 
@@ -60,7 +65,8 @@ class AccountRepository(context: Context) {
         call("PUT", "/sync", JSONObject().put("data", data).put("updatedAt", updatedAt))
     }
 
-    private suspend fun call(method: String, path: String, body: JSONObject?): JSONObject = withContext(Dispatchers.IO) {
+    /** Calls the relay with this account's session, if any; also used by [StoriesRepository]. */
+    suspend fun call(method: String, path: String, body: JSONObject?): JSONObject = withContext(Dispatchers.IO) {
         val connection = (URL(BuildConfig.RELAY_URL + path).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 10_000

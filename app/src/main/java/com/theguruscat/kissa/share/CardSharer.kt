@@ -89,10 +89,12 @@ object CardSharer {
         canvas.drawText(shortLink(post), WIDTH - PADDING, HEIGHT - PADDING + 12f, source)
     }
 
-    /** "bbc.co.uk" for an article, "reddit.com/r/tifu" for a post: where the full story lives. */
-    private fun shortLink(post: RedditPost): String =
-        if (post.isNews) Uri.parse(post.url).host?.removePrefix("www.").orEmpty()
-        else "reddit.com/r/${post.subreddit}"
+    /** "bbc.co.uk" for an article, "reddit.com/r/tifu" for a post, "Stories" for Kissa's own: where it lives. */
+    private fun shortLink(post: RedditPost): String = when {
+        post.isNews -> Uri.parse(post.url).host?.removePrefix("www.").orEmpty()
+        post.isOriginal -> "Stories"
+        else -> "reddit.com/r/${post.subreddit}"
+    }
 
     private fun textPaint(size: Float, color: Int, typeface: Typeface) = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = size
