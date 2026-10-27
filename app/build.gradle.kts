@@ -23,6 +23,8 @@ android {
         // GitHub repo ("owner/name") whose releases the app checks for updates.
         buildConfigField("String", "UPDATE_REPO", "\"TheGurusCat/kissa\"")
         // Cloudflare Worker that calls Reddit's API for the app (source in /relay).
+        // Google Cloud "Web application" OAuth client ID (the relay's GOOGLE_CLIENT_ID); empty hides "Continue with Google".
+        buildConfigField("String", "GOOGLE_CLIENT_ID", "\"\"")
         buildConfigField("String", "RELAY_URL", "\"https://kissa-relay.abpro.workers.dev\"")
     }
 
@@ -75,4 +77,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // "Continue with Google" through Android's Credential Manager.
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
 }

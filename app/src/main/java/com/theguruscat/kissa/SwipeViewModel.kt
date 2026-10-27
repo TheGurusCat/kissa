@@ -87,11 +87,16 @@ data class AccountState(
     val isBusy: Boolean = false,
     val error: String? = null,
     val lastSyncedAt: Long = 0L,
-    /** Can post Kissa stories (the Write screen). */
-    val isAuthor: Boolean = false,
-)
+    /** The public name stories and comments show; null until one is picked. */
+    val username: String? = null,
+    val isAdmin: Boolean = false,
+    val isBanned: Boolean = false,
+) {
+    /** Can write stories and comments: signed in, with a username, not banned. */
+    val canPost: Boolean get() = email != null && username != null && !isBanned
+}
 
-/** The author's Write screen: their published stories and whether a save is under way. */
+/** The Write screen: the stories this account published and whether a save is under way. */
 data class WritingState(
     val stories: List<RedditPost> = emptyList(),
     val isLoading: Boolean = false,
@@ -142,6 +147,9 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
     private val store = LocalStore(app)
     private val account = AccountRepository(app)
     private val stories = StoriesRepository(account)
+
+    /** Comments, profiles, reports and moderation, which their screens load themselves. */
+    val community: StoriesRepository get() = stories
     private val sync = AccountSync(account, ::syncSnapshot, ::syncFingerprint, ::applySyncSnapshot)
 
     private val _state = MutableStateFlow(
@@ -153,7 +161,7 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
             readMode = ReadMode.entries.firstOrNull { it.name == store.readMode } ?: ReadMode.Mixed,
             storyMode = ReadMode.STORY_MODES.firstOrNull { it.name == (store.storyMode ?: store.readMode) } ?: ReadMode.Mixed,
             showSwipeHint = !store.swipeHintDone,
-            account = AccountState(email = account.email, lastSyncedAt = account.syncedAt, isAuthor = account.isAuthor),
+            account = AccountState(email = account.email, lastSyncedAt = account.syncedAt).withProfile(),
         ),
     )
     val state: StateFlow<SwipeUiState> = _state.asStateFlow()
@@ -210,6 +218,7 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
         history.addLast(post to save)
         if (history.size > MAX_UNDO) history.removeFirst()
         if (_state.value.showSwipeHint) store.swipeHintDone = true
+        if (save && post.isOriginal) vote(post, up = true)
         _state.update {
             it.copy(
                 showSwipeHint = false,
@@ -225,6 +234,7 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
     fun undo() {
         val (post, wasSaved) = history.removeLastOrNull() ?: return
         seen.removeAll(post.seenKeys.toSet())
+        if (wasSaved && post.isOriginal) vote(post, up = false)
         _state.update {
             it.copy(
                 deck = listOf(post) + it.deck,
@@ -233,6 +243,18 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
                 stats = it.stats.adjustToday(stories = -1, seconds = 0),
             )
         }
+    }
+
+    /** Upvotes a Kissa story (or takes it back) when signed in; reading works without an account. */
+    private fun vote(post: RedditPost, up: Boolean) {
+        val me = _state.value.account
+        if (me.email == null || me.isBanned) return
+        viewModelScope.launch { runCatching { stories.vote(post.id, up) } }
+    }
+
+    /** Drops a Kissa story an admin removed from this phone's deck. */
+    fun forgetStory(cardId: String) {
+        _state.update { it.copy(deck = it.deck.filterNot { card -> card.id == cardId }) }
     }
 
     fun removeSaved(post: RedditPost) {
@@ -367,11 +389,35 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
         val email = _state.value.account.pendingEmail ?: return
         accountAction {
             account.verifyCode(email, code.trim())
-            _state.update { it.copy(account = AccountState(email = account.email, isBusy = true, isAuthor = account.isAuthor)) }
+            _state.update { it.copy(account = AccountState(email = account.email, isBusy = true).withProfile()) }
             // The first sync merges this phone's likes into the account rather than replacing either side.
             runSync(firstTime = true, quiet = false)
         }
     }
+
+    /** Finishes "Continue with Google" with the ID token Credential Manager returned. */
+    fun signInWithGoogle(idToken: String) {
+        accountAction {
+            account.signInWithGoogle(idToken)
+            _state.update { it.copy(account = AccountState(email = account.email, isBusy = true).withProfile()) }
+            runSync(firstTime = true, quiet = false)
+        }
+    }
+
+    /** Shows why Google sign-in didn't finish (cancelled, no Google account, no connection). */
+    fun showAccountError(message: String) {
+        _state.update { it.copy(account = it.account.copy(error = message)) }
+    }
+
+    fun setUsername(name: String) {
+        accountAction {
+            account.setUsername(name.trim())
+            _state.update { it.copy(account = it.account.withProfile()) }
+        }
+    }
+
+    private fun AccountState.withProfile() =
+        copy(username = account.username, isAdmin = account.isAdmin, isBanned = account.isBanned)
 
     fun cancelSignIn() {
         _state.update { it.copy(account = AccountState()) }
@@ -407,7 +453,7 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
         lastSyncAttempt = SystemClock.elapsedRealtime()
         try {
             if (sync.sync(firstTime, forceUpload)) seenAtUpload = seen.size
-            _state.update { it.copy(account = it.account.copy(lastSyncedAt = account.syncedAt, isAuthor = account.isAuthor)) }
+            _state.update { it.copy(account = it.account.copy(lastSyncedAt = account.syncedAt).withProfile()) }
         } catch (e: SignedOutException) {
             _state.update { it.copy(account = AccountState(error = e.message)) }
             if (!quiet) throw e
@@ -617,12 +663,13 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
     private fun List<RedditPost>.withOriginals(originals: List<RedditPost>): List<RedditPost> =
         filterNot { it.isOriginal } + originals.sortedByDescending { it.publishedAt }
 
-    // --- Writing Kissa stories (authors only; see StoriesRepository) ---
+    // --- Writing Kissa stories (any account with a username; see StoriesRepository) ---
 
     fun loadMyStories() {
+        val username = _state.value.account.username ?: return
         _state.update { it.copy(writing = it.writing.copy(isLoading = true, error = null)) }
         viewModelScope.launch {
-            val result = runCatching { stories.fetch(limit = 100) }
+            val result = runCatching { stories.profile(username).stories }
             _state.update {
                 it.copy(
                     writing = it.writing.copy(

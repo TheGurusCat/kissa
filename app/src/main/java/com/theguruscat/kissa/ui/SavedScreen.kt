@@ -26,6 +26,7 @@ fun SavedScreen(
     saved: List<RedditPost>,
     onRemove: (RedditPost) -> Unit,
     onShare: (RedditPost) -> Unit,
+    onOpenComments: (RedditPost) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (saved.isEmpty()) {
@@ -38,7 +39,8 @@ fun SavedScreen(
     LazyColumn(modifier.fillMaxSize()) {
         items(saved.asReversed(), key = { it.id }) { post ->
             ListItem(
-                modifier = Modifier.clickable { uriHandler.openUri(post.url) },
+                // Kissa stories open their comments in the app; the rest open on Reddit or the news site.
+                modifier = Modifier.clickable { if (post.isOriginal) onOpenComments(post) else uriHandler.openUri(post.url) },
                 overlineContent = { Text("${post.sourceLabel}  ·  ${post.readMinutes} min read") },
                 headlineContent = { Text(post.title, maxLines = 3, overflow = TextOverflow.Ellipsis) },
                 supportingContent = if (post.body.isNotBlank()) {

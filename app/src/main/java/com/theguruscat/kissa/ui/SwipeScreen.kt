@@ -84,6 +84,8 @@ fun SwipeScreen(
     onOpenNews: () -> Unit,
     onTextScale: (Float) -> Unit,
     onReadMode: (ReadMode) -> Unit,
+    onOpenComments: (RedditPost) -> Unit,
+    onOpenProfile: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val view = LocalView.current
@@ -192,7 +194,14 @@ fun SwipeScreen(
                             },
                         transform = if (isTop) topTransform else backTransform,
                         onTextScale = if (isTop) onTextScale else null,
-                        onOpen = if (isTop && post.isNews) ({ uriHandler.openUri(post.url) }) else null,
+                        onOpen = when {
+                            !isTop -> null
+                            post.isNews -> ({ uriHandler.openUri(post.url) })
+                            post.isOriginal -> ({ onOpenComments(post) })
+                            else -> null
+                        },
+                        openLabel = if (post.isOriginal) "Hold for comments" else "Hold for full article ↗",
+                        onSource = if (isTop && post.isOriginal && post.author.isNotEmpty()) ({ onOpenProfile(post.author) }) else null,
                     )
                 }
             }

@@ -1,14 +1,21 @@
-// Optional Kissa accounts: sign in with a 6-digit code sent by email, then sync liked cards, sources,
-// settings and daily reading stats across phones.
+// Kissa accounts: sign in with Google or a 6-digit code sent by email, pick a username to post and comment,
+// and sync liked cards, sources, settings and daily reading stats across phones.
 //
 //   POST /auth/code    {email}          emails a code (one per minute per address, valid 10 minutes)
-//   POST /auth/verify  {email, code}    returns {token, email, isAuthor}; 5 wrong tries and the code is void
+//   POST /auth/verify  {email, code}    returns {token, email, profile}; 5 wrong tries and the code is void
+//   POST /auth/google  {idToken}        signs in with a Google ID token; same reply as /auth/verify
 //   POST /auth/signout                  ends this session
-//   GET  /sync                          returns {data, updatedAt, isAuthor} (data is null before the first upload)
+//   GET  /me                            returns {email, profile}
+//   PUT  /me           {username}       picks or changes the username; returns {email, profile}
+//   GET  /sync                          returns {data, updatedAt, profile} (data is null before the first upload)
 //   PUT  /sync         {data, updatedAt} replaces the account's data with this snapshot
+//
+// profile is {username, isAdmin, isBanned}; username is null until one is picked.
 //
 // The app still sends and receives one JSON snapshot; here it is split into D1 tables (DB binding, schema in
 // ../migrations): users, sessions, sign_in_codes, likes and daily_stats. Tokens and codes are only ever stored hashed.
+
+import { verifiedGoogleEmail } from "./google.js";
 
 const CODE_TTL_MS = 10 * 60 * 1000;
 const RESEND_WAIT_MS = 60 * 1000;
@@ -18,6 +25,9 @@ const MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024;
 const MAX_LIKES = 5000;
 const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
+const RESERVED_USERNAMES = new Set(["admin", "administrator", "kissa", "mod", "moderator", "support", "deleted", "system"]);
+
 
 export async function handleAccount(request, env, url) {
   const route = `${request.method} ${url.pathname}`;
@@ -25,6 +35,9 @@ export async function handleAccount(request, env, url) {
     switch (route) {
       case "POST /auth/code": return await sendCode(request, env);
       case "POST /auth/verify": return await verifyCode(request, env);
+      case "POST /auth/google": return await googleSignIn(request, env);
+      case "GET /me": return await getMe(request, env);
+      case "PUT /me": return await setUsername(request, env);
       case "POST /auth/signout": return await signOut(request, env);
       case "GET /sync": return await getSnapshot(request, env);
       case "PUT /sync": return await putSnapshot(request, env);
@@ -90,19 +103,57 @@ async function verifyCode(request, env) {
     await env.DB.prepare("UPDATE sign_in_codes SET attempts = attempts + 1 WHERE email = ?").bind(email).run();
     throw new HttpError(400, "That code isn't right.");
   }
+  await env.DB.prepare("DELETE FROM sign_in_codes WHERE email = ?").bind(email).run();
+  return await startSession(env, email);
+}
+
+async function googleSignIn(request, env) {
+  if (!env.GOOGLE_CLIENT_ID) throw new HttpError(503, "Google sign-in isn't available yet. Use your email.");
+  const email = await verifiedGoogleEmail((await readJson(request)).idToken, env);
+  if (!email) throw new HttpError(401, "Google sign-in didn't work. Try again.");
+  return await startSession(env, normalizeEmail(email));
+}
+
+/** Signs [email] in, creating its account the first time; the same for email codes and Google. */
+async function startSession(env, email) {
+  const now = Date.now();
   const user = await env.DB.prepare(
     `INSERT INTO users (email, created_at, last_seen_at) VALUES (?, ?, ?)
-     ON CONFLICT(email) DO UPDATE SET last_seen_at = excluded.last_seen_at RETURNING id, is_author`,
+     ON CONFLICT(email) DO UPDATE SET last_seen_at = excluded.last_seen_at RETURNING *`,
   ).bind(email, now, now).first();
   const token = hex(crypto.getRandomValues(new Uint8Array(32)));
   await env.DB.batch([
-    env.DB.prepare("DELETE FROM sign_in_codes WHERE email = ?").bind(email),
     env.DB.prepare("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
       .bind(await sha256(token), user.id, now, now + SESSION_TTL_MS),
     // Expired sessions of anyone are cleared now and then, on sign-in.
     env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
   ]);
-  return json({ token, email, isAuthor: !!user.is_author }, 200);
+  return json({ token, email, profile: profile(user) }, 200);
+}
+
+async function getMe(request, env) {
+  const user = await requireUser(request, env);
+  return json({ email: user.email, profile: profile(user) }, 200);
+}
+
+async function setUsername(request, env) {
+  const user = await requireUser(request, env);
+  const username = String((await readJson(request)).username ?? "").trim().replace(/^u\//, "");
+  if (!USERNAME_PATTERN.test(username)) {
+    throw new HttpError(400, "Use 3 to 20 letters, numbers or underscores.");
+  }
+  const key = username.toLowerCase();
+  if (RESERVED_USERNAMES.has(key)) throw new HttpError(409, "That username is taken.");
+  const taken = await env.DB.prepare("SELECT id FROM users WHERE username_key = ? AND id != ?").bind(key, user.id).first();
+  if (taken) throw new HttpError(409, "That username is taken.");
+  const updated = await env.DB.prepare("UPDATE users SET username = ?, username_key = ? WHERE id = ? RETURNING *")
+    .bind(username, key, user.id).first();
+  return json({ email: updated.email, profile: profile(updated) }, 200);
+}
+
+/** What the app needs to know about an account besides its synced data. */
+export function profile(user) {
+  return { username: user.username ?? null, isAdmin: !!user.is_admin, isBanned: !!user.is_banned };
 }
 
 async function signOut(request, env) {
@@ -112,11 +163,9 @@ async function signOut(request, env) {
 }
 
 async function getSnapshot(request, env) {
-  const userId = await requireSession(request, env);
-  const user = await env.DB.prepare("SELECT synced_at, subreddits, news_feeds, settings, seen, is_author FROM users WHERE id = ?")
-    .bind(userId).first();
-  const isAuthor = !!user.is_author;
-  if (!user.synced_at) return json({ data: null, updatedAt: 0, isAuthor }, 200);
+  const user = await requireUser(request, env);
+  const userId = user.id;
+  if (!user.synced_at) return json({ data: null, updatedAt: 0, profile: profile(user) }, 200);
   const [likes, stats] = await env.DB.batch([
     env.DB.prepare("SELECT * FROM likes WHERE user_id = ? ORDER BY position").bind(userId),
     env.DB.prepare("SELECT day, stories, seconds FROM daily_stats WHERE user_id = ?").bind(userId),
@@ -142,7 +191,7 @@ async function getSnapshot(request, env) {
   for (const [key, column] of [["subreddits", "subreddits"], ["newsFeeds", "news_feeds"], ["settings", "settings"], ["seen", "seen"]]) {
     if (user[column] != null) data[key] = JSON.parse(user[column]);
   }
-  return json({ data, updatedAt: user.synced_at, isAuthor }, 200);
+  return json({ data, updatedAt: user.synced_at, profile: profile(user) }, 200);
 }
 
 async function putSnapshot(request, env) {
@@ -231,11 +280,23 @@ function int(value) {
 }
 
 export async function requireSession(request, env) {
+  return (await requireUser(request, env)).id;
+}
+
+/** The signed-in account's users row; throws 401 if signed out. */
+export async function requireUser(request, env) {
+  const user = await currentUser(request, env);
+  if (!user) throw new HttpError(401, "Signed out. Sign in again.");
+  return user;
+}
+
+/** The signed-in account's users row, or null when the request has no valid session. */
+export async function currentUser(request, env) {
   const token = bearer(request);
-  const session = token && await env.DB.prepare("SELECT user_id, expires_at FROM sessions WHERE token_hash = ?")
-    .bind(await sha256(token)).first();
-  if (!session || session.expires_at < Date.now()) throw new HttpError(401, "Signed out. Sign in again.");
-  return session.user_id;
+  if (!token) return null;
+  return await env.DB.prepare(
+    "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at >= ?",
+  ).bind(await sha256(token), Date.now()).first();
 }
 
 function bearer(request) {

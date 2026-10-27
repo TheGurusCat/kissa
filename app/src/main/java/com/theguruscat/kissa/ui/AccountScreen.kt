@@ -30,17 +30,21 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.theguruscat.kissa.AccountState
+import com.theguruscat.kissa.data.GoogleSignIn
 
 /**
- * The optional account: signed out, it asks for an email and then the 6-digit code sent there; signed in,
- * it shows the address, when this phone last synced, and Sync now / Sign out.
+ * The account: signed out, it offers "Continue with Google" or an email and then the 6-digit code sent
+ * there; signed in, it shows the username (or asks for one), the address, when this phone last synced, and
+ * Sync now / Sign out.
  */
 @Composable
 fun AccountScreen(
     account: AccountState,
+    onGoogle: () -> Unit,
     onRequestCode: (String) -> Unit,
     onVerifyCode: (String) -> Unit,
     onCancel: () -> Unit,
+    onSetUsername: (String) -> Unit,
     onSyncNow: () -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
@@ -50,9 +54,12 @@ fun AccountScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         when {
-            account.email != null -> SignedIn(account, onSyncNow, onSignOut)
+            account.email != null -> {
+                Username(account, onSetUsername)
+                SignedIn(account, onSyncNow, onSignOut)
+            }
             account.pendingEmail != null -> EnterCode(account, onVerifyCode, onRequestCode, onCancel)
-            else -> EnterEmail(account, onRequestCode)
+            else -> EnterEmail(account, onGoogle, onRequestCode)
         }
         account.error?.let {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
@@ -61,16 +68,26 @@ fun AccountScreen(
 }
 
 @Composable
-private fun EnterEmail(account: AccountState, onRequestCode: (String) -> Unit) {
+private fun EnterEmail(account: AccountState, onGoogle: () -> Unit, onRequestCode: (String) -> Unit) {
     var email by rememberSaveable { mutableStateOf("") }
     val send = { if (email.isNotBlank()) onRequestCode(email) }
-    Text("Sync across phones", style = MaterialTheme.typography.titleLarge)
+    Text("Join Kissa", style = MaterialTheme.typography.titleLarge)
     Text(
-        "An account is optional. Sign in to keep your liked cards, news sources, subreddits and settings the " +
-            "same on every phone. No password: we email you a 6-digit code.",
+        "Reading needs no account. Sign in to write stories, comment and upvote, and to keep your liked cards, " +
+            "sources and settings the same on every phone. No password needed.",
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    if (GoogleSignIn.isAvailable) {
+        Button(onClick = onGoogle, enabled = !account.isBusy, modifier = Modifier.fillMaxWidth()) {
+            Text("Continue with Google")
+        }
+        Text(
+            "Or get a 6-digit code by email:",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
     OutlinedTextField(
         value = email,
         onValueChange = { email = it },
@@ -114,9 +131,49 @@ private fun EnterCode(
     }
 }
 
+/** The public name: asked for until one is picked, then shown with a way to change it. */
+@Composable
+private fun Username(account: AccountState, onSetUsername: (String) -> Unit) {
+    var editing by rememberSaveable { mutableStateOf(false) }
+    var name by rememberSaveable(account.username) { mutableStateOf(account.username.orEmpty()) }
+    if (account.username != null && !editing) {
+        Text("u/${account.username}", style = MaterialTheme.typography.titleLarge)
+        if (account.isBanned) {
+            Text(
+                "This account can read but can't post, comment, vote or report.",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        TextButton(onClick = { editing = true }, enabled = !account.isBusy) { Text("Change username") }
+        return
+    }
+    Text("Pick a username", style = MaterialTheme.typography.titleLarge)
+    Text(
+        "Your stories and comments show it as u/name. 3 to 20 letters, numbers or underscores.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    val save = { if (name.isNotBlank()) { onSetUsername(name); editing = false } }
+    OutlinedTextField(
+        value = name,
+        onValueChange = { input -> name = input.filter { it.isLetterOrDigit() || it == '_' }.take(20) },
+        label = { Text("Username") },
+        prefix = { Text("u/") },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { save() }),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row {
+        BusyButton("Save username", account.isBusy, enabled = name.length >= 3, onClick = save)
+        if (account.username != null) TextButton(onClick = { editing = false }) { Text("Cancel") }
+    }
+}
+
 @Composable
 private fun SignedIn(account: AccountState, onSyncNow: () -> Unit, onSignOut: () -> Unit) {
-    Text("Signed in", style = MaterialTheme.typography.titleLarge)
+    Text("Signed in", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
     Text(account.email.orEmpty(), style = MaterialTheme.typography.bodyLarge)
     Text(
         if (account.lastSyncedAt > 0) {

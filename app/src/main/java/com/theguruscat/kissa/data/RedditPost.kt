@@ -25,8 +25,12 @@ data class RedditPost(
 ) {
     val url: String get() = if (isNews || isOriginal) permalink else "https://www.reddit.com$permalink"
 
-    /** Where the card came from, as shown above it: "r/tifu", "BBC News" or "Kissa". */
-    val sourceLabel: String get() = if (isNews || isOriginal) subreddit else "r/$subreddit"
+    /** Where the card came from, as shown above it: "r/tifu", "BBC News", or "u/name" for a Kissa story. */
+    val sourceLabel: String get() = when {
+        isOriginal -> if (author.isNotEmpty()) "u/$author" else subreddit
+        isNews -> subreddit
+        else -> "r/$subreddit"
+    }
 
     /** A Reddit post: neither news nor a Kissa story. */
     val isReddit: Boolean get() = !isNews && !isOriginal

@@ -36,22 +36,44 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.theguruscat.kissa.AccountState
 import com.theguruscat.kissa.WritingState
 import com.theguruscat.kissa.data.RedditPost
 
 /**
- * Authors only: write a story for the Stories tab, and edit or delete the ones already published.
- * Publishing is immediate; readers get new stories the next time their Stories tab fetches.
+ * Write a story for the Stories tab, and edit or delete the ones already published. Needs an account with a
+ * username; until then it points to the Account screen. Publishing is immediate; readers get new stories the
+ * next time their Stories tab fetches.
  */
 @Composable
 fun WriteScreen(
+    account: AccountState,
     writing: WritingState,
+    onOpenAccount: () -> Unit,
     onLoad: () -> Unit,
     onSave: (id: String?, title: String, body: String, onSaved: () -> Unit) -> Unit,
     onDelete: (RedditPost) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    LaunchedEffect(Unit) { onLoad() }
+    if (!account.canPost) {
+        Column(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Write for Kissa", style = MaterialTheme.typography.titleLarge)
+            Text(
+                when {
+                    account.isBanned -> "This account can't post stories."
+                    account.email == null -> "Anyone can post stories here. Sign in first; it takes a few seconds."
+                    else -> "Pick a username first. Your stories show it as u/name."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!account.isBanned) {
+                Button(onClick = onOpenAccount) { Text(if (account.email == null) "Sign in" else "Pick a username") }
+            }
+        }
+        return
+    }
+    LaunchedEffect(account.username) { onLoad() }
     // The story being edited; null while writing a new one.
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     var title by rememberSaveable { mutableStateOf("") }
@@ -106,7 +128,7 @@ fun WriteScreen(
         when {
             writing.isLoading && writing.stories.isEmpty() -> CircularProgressIndicator(Modifier.size(24.dp))
             writing.stories.isEmpty() -> Text(
-                "Nothing yet. Your stories appear in everyone's Stories tab, newest first.",
+                "Nothing yet. Your stories appear in everyone's Stories tab, newest first, as u/${account.username}.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

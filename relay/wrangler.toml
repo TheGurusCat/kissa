@@ -8,6 +8,8 @@ account_id = "6646c9a4473bb8fd48897676e1849b3e"
 
 [vars]
 SENDER = "Kissa <signin@wannabeguru.com>"
+# Google Cloud "Web application" OAuth client ID for "Continue with Google"; empty turns Google sign-in off.
+GOOGLE_CLIENT_ID = ""
 
 # Cloudflare Email Service. Sending to any address (not just verified ones) needs the Workers Paid plan.
 [[send_email]]

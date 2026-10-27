@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.BarChart
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Style
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,6 +44,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -58,14 +61,19 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.theguruscat.kissa.data.GoogleSignIn
+import com.theguruscat.kissa.data.RedditPost
 import com.theguruscat.kissa.share.CardSharer
 import com.theguruscat.kissa.ui.AccountScreen
+import com.theguruscat.kissa.ui.CommentsScreen
+import com.theguruscat.kissa.ui.ModerationScreen
 import com.theguruscat.kissa.ui.NewsSourcesScreen
+import com.theguruscat.kissa.ui.ProfileScreen
 import com.theguruscat.kissa.ui.SavedScreen
 import com.theguruscat.kissa.ui.SettingsScreen
 import com.theguruscat.kissa.ui.StatsScreen
-import com.theguruscat.kissa.ui.SwipeBackContainer
 import com.theguruscat.kissa.ui.SubredditsScreen
+import com.theguruscat.kissa.ui.SwipeBackContainer
 import com.theguruscat.kissa.ui.SwipeScreen
 import com.theguruscat.kissa.ui.WriteScreen
 import com.theguruscat.kissa.ui.theme.KissaTheme
@@ -79,10 +87,17 @@ enum class Screen(val title: String, val icon: ImageVector) {
     News("News sources", Icons.Filled.Newspaper),
     Subreddits("Subreddits", Icons.Filled.Forum),
     Stats("Stats", Icons.Filled.BarChart),
-    // Shown only to authors.
     Write("Write a story", Icons.Filled.Edit),
+    // Shown only to admins.
+    Moderation("Moderation", Icons.Filled.Shield),
     Account("Account", Icons.Filled.AccountCircle),
     Settings("Settings", Icons.Filled.Settings),
+}
+
+/** A story's comments or someone's profile, opened on top of the current screen; back closes it. */
+private sealed interface Detail {
+    data class Comments(val post: RedditPost) : Detail
+    data class Profile(val username: String) : Detail
 }
 
 class MainActivity : ComponentActivity() {
@@ -95,6 +110,11 @@ class MainActivity : ComponentActivity() {
                 val vm: SwipeViewModel = viewModel()
                 val state by vm.state.collectAsStateWithLifecycle()
                 var screen by rememberSaveable { mutableStateOf(Screen.Swipe) }
+                // Comments and profiles can lead to each other, so they stack; the last one shows.
+                val details = remember { mutableStateListOf<Detail>() }
+                val detail = details.lastOrNull()
+                val openComments = { post: RedditPost -> details += Detail.Comments(post) }
+                val openProfile = { name: String -> details += Detail.Profile(name) }
                 val drawerState = rememberDrawerState(DrawerValue.Closed)
                 val scope = rememberCoroutineScope()
                 val context = LocalContext.current
@@ -128,7 +148,7 @@ class MainActivity : ComponentActivity() {
                                         style = MaterialTheme.typography.titleLarge,
                                         modifier = Modifier.padding(start = 28.dp, top = 24.dp, bottom = 16.dp),
                                     )
-                                    Screen.entries.filter { it != Screen.Write || state.account.isAuthor }.forEach { item ->
+                                    Screen.entries.filter { it != Screen.Moderation || state.account.isAdmin }.forEach { item ->
                                         NavigationDrawerItem(
                                             label = { Text(item.title) },
                                             icon = { Icon(item.icon, contentDescription = null) },
@@ -136,7 +156,7 @@ class MainActivity : ComponentActivity() {
                                                 if (item == Screen.Saved && state.saved.isNotEmpty()) Text("${state.saved.size}")
                                             },
                                             selected = screen == item,
-                                            onClick = { screen = item; scope.launch { drawerState.close() } },
+                                            onClick = { screen = item; details.clear(); scope.launch { drawerState.close() } },
                                             modifier = Modifier.padding(horizontal = 12.dp),
                                         )
                                     }
@@ -177,16 +197,28 @@ class MainActivity : ComponentActivity() {
                                 snackbarHost = { SnackbarHost(snackbar) },
                                 topBar = {
                                     TopAppBar(
-                                        title = { Text(screen.title) },
+                                        title = {
+                                            Text(
+                                                when (detail) {
+                                                    is Detail.Comments -> "Comments"
+                                                    is Detail.Profile -> "u/${detail.username}"
+                                                    null -> screen.title
+                                                },
+                                            )
+                                        },
                                         navigationIcon = {
-                                            if (screen == Screen.Swipe) {
+                                            if (detail != null) {
+                                                IconButton(onClick = { details.removeLastOrNull() }) {
+                                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                                                }
+                                            } else if (screen == Screen.Swipe) {
                                                 IconButton(onClick = vm::undo, enabled = state.canUndo) {
                                                     Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo last swipe")
                                                 }
                                             }
                                         },
                                         actions = {
-                                            if (screen == Screen.Swipe) {
+                                            if (screen == Screen.Swipe && detail == null) {
                                                 val top = state.visibleDeck.firstOrNull()
                                                 IconButton(
                                                     onClick = { top?.let { scope.launch { CardSharer.share(context, it) } } },
@@ -203,7 +235,33 @@ class MainActivity : ComponentActivity() {
                                 },
                             ) { padding ->
                                 val content = Modifier.padding(padding)
-                                if (screen == Screen.Swipe) {
+                                if (detail != null) {
+                                    key(detail) {
+                                        SwipeBackContainer(
+                                            enabled = !drawerState.isOpen,
+                                            onBack = { details.removeLastOrNull() },
+                                            modifier = content,
+                                        ) {
+                                            when (detail) {
+                                                is Detail.Comments -> CommentsScreen(
+                                                    post = detail.post,
+                                                    account = state.account,
+                                                    community = vm.community,
+                                                    onOpenProfile = openProfile,
+                                                    onStoryRemoved = { post ->
+                                                        vm.forgetStory(post.id)
+                                                        details.removeLastOrNull()
+                                                    },
+                                                )
+                                                is Detail.Profile -> ProfileScreen(
+                                                    username = detail.username,
+                                                    community = vm.community,
+                                                    onOpenStory = openComments,
+                                                )
+                                            }
+                                        }
+                                    }
+                                } else if (screen == Screen.Swipe) {
                                     SwipeScreen(
                                         state = state,
                                         onSwipeLeft = vm::swipeLeft,
@@ -213,6 +271,8 @@ class MainActivity : ComponentActivity() {
                                         onOpenNews = { screen = Screen.News },
                                         onTextScale = vm::setTextScale,
                                         onReadMode = vm::setReadMode,
+                                        onOpenComments = openComments,
+                                        onOpenProfile = openProfile,
                                         modifier = content,
                                     )
                                 } else {
@@ -227,6 +287,7 @@ class MainActivity : ComponentActivity() {
                                             when (screen) {
                                                 Screen.Saved -> SavedScreen(
                                                     saved = state.saved,
+                                                    onOpenComments = openComments,
                                         onShare = { post -> scope.launch { CardSharer.share(context, post) } },
                                                     onRemove = { post ->
                                                         val index = state.saved.indexOf(post)
@@ -256,16 +317,30 @@ class MainActivity : ComponentActivity() {
                                                 )
                                                 Screen.Stats -> StatsScreen(stats = state.stats)
                                                 Screen.Write -> WriteScreen(
+                                                    account = state.account,
                                                     writing = state.writing,
+                                                    onOpenAccount = { screen = Screen.Account },
                                                     onLoad = vm::loadMyStories,
                                                     onSave = vm::saveStory,
                                                     onDelete = vm::deleteStory,
                                                 )
+                                                Screen.Moderation -> ModerationScreen(
+                                                    community = vm.community,
+                                                    onStoryRemoved = vm::forgetStory,
+                                                )
                                                 Screen.Account -> AccountScreen(
                                                     account = state.account,
+                                                    onGoogle = {
+                                                        scope.launch {
+                                                            runCatching { GoogleSignIn.idToken(context) }
+                                                                .onSuccess { token -> token?.let(vm::signInWithGoogle) }
+                                                                .onFailure { vm.showAccountError(it.message ?: "Google sign-in didn't work.") }
+                                                        }
+                                                    },
                                                     onRequestCode = vm::requestSignInCode,
                                                     onVerifyCode = vm::verifySignInCode,
                                                     onCancel = vm::cancelSignIn,
+                                                    onSetUsername = vm::setUsername,
                                                     onSyncNow = vm::syncNow,
                                                     onSignOut = vm::signOut,
                                                 )

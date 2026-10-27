@@ -9,9 +9,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * The optional account, through the relay Worker (see relay/src/account.js): sign in with a code sent by
- * email, then upload and download one JSON snapshot of the things that sync. The session token and sync
- * bookkeeping live in their own SharedPreferences, so signing out clears just that.
+ * The account, through the relay Worker (see relay/src/account.js): sign in with Google or a code sent by
+ * email, pick a username, then upload and download one JSON snapshot of the things that sync. The session
+ * token, profile and sync bookkeeping live in their own SharedPreferences, so signing out clears just that.
  */
 class AccountRepository(context: Context) {
 
@@ -21,8 +21,13 @@ class AccountRepository(context: Context) {
 
     val isSignedIn: Boolean get() = prefs.getString("token", null) != null
 
-    /** This account can post Kissa stories; the server says so on sign-in and on every sync. */
-    val isAuthor: Boolean get() = prefs.getBoolean("is_author", false)
+    /** The account's public name ("u/name"); null until one is picked. Refreshed on sign-in and every sync. */
+    val username: String? get() = prefs.getString("username", null)
+
+    val isAdmin: Boolean get() = prefs.getBoolean("is_admin", false)
+
+    /** Banned accounts can still read and sync, but not post, vote, comment or report. */
+    val isBanned: Boolean get() = prefs.getBoolean("is_banned", false)
 
     /** The server's updatedAt for the snapshot this phone last uploaded or applied. */
     var syncedAt: Long
@@ -39,12 +44,34 @@ class AccountRepository(context: Context) {
     }
 
     suspend fun verifyCode(email: String, code: String) {
-        val result = call("POST", "/auth/verify", JSONObject().put("email", email).put("code", code))
+        startSession(call("POST", "/auth/verify", JSONObject().put("email", email).put("code", code)))
+    }
+
+    /** Signs in with an ID token from "Continue with Google" (see GoogleSignIn). */
+    suspend fun signInWithGoogle(idToken: String) {
+        startSession(call("POST", "/auth/google", JSONObject().put("idToken", idToken)))
+    }
+
+    private fun startSession(result: JSONObject) {
         prefs.edit()
             .clear()
             .putString("token", result.getString("token"))
             .putString("email", result.getString("email"))
-            .putBoolean("is_author", result.optBoolean("isAuthor"))
+            .apply()
+        saveProfile(result)
+    }
+
+    /** Picks or changes the username; throws with the server's reason if it's taken or invalid. */
+    suspend fun setUsername(name: String) {
+        saveProfile(call("PUT", "/me", JSONObject().put("username", name)))
+    }
+
+    private fun saveProfile(result: JSONObject) {
+        val profile = result.optJSONObject("profile") ?: return
+        prefs.edit()
+            .putString("username", profile.optString("username").takeUnless { profile.isNull("username") || it.isEmpty() })
+            .putBoolean("is_admin", profile.optBoolean("isAdmin"))
+            .putBoolean("is_banned", profile.optBoolean("isBanned"))
             .apply()
     }
 
@@ -57,7 +84,7 @@ class AccountRepository(context: Context) {
     /** The account's snapshot and when it was uploaded; null data before the first upload. */
     suspend fun download(): Pair<JSONObject?, Long> {
         val result = call("GET", "/sync", null)
-        prefs.edit().putBoolean("is_author", result.optBoolean("isAuthor")).apply()
+        saveProfile(result)
         return result.optJSONObject("data") to result.optLong("updatedAt")
     }
 

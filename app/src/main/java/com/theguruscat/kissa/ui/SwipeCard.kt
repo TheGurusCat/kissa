@@ -7,6 +7,7 @@ import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -169,8 +170,9 @@ fun backScale(dragProgress: Float): Float = BACK_SCALE + (1f - BACK_SCALE) * dra
  * runs in the card's single graphics layer, and [decision] (-1..1) fades in the LIKE/SKIP stamps.
  * Both are read only while drawing, so a moving card never recomposes or re-lays-out its text.
  * With [onTextScale], pinching with two fingers resizes the card's text (the same size Settings shows)
- * and reports it when the fingers lift. [onOpen] adds a link to the full article under news cards; it
- * opens on a long press, so a stray tap never takes the reader out of the app.
+ * and reports it when the fingers lift. [onOpen] adds a link under the card ([openLabel]: the full article
+ * for news, the comments for Kissa stories); it opens on a long press, so a stray tap never acts.
+ * [onSource] makes the header (a Kissa story's "u/name") tappable.
  */
 @Composable
 fun SwipeCard(
@@ -181,6 +183,8 @@ fun SwipeCard(
     transform: GraphicsLayerScope.() -> Unit = {},
     onTextScale: ((Float) -> Unit)? = null,
     onOpen: (() -> Unit)? = null,
+    openLabel: String = "Hold for full article ↗",
+    onSource: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val isShort = post.body.length < SHORT_POST_CHARS
@@ -245,7 +249,12 @@ fun SwipeCard(
             .background(container),
     ) {
         Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 20.dp)) {
-            Text(header, style = typography.labelLarge)
+            Text(
+                header,
+                style = typography.labelLarge,
+                modifier = if (onSource == null) Modifier
+                else Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onSource),
+            )
             Box(
                 Modifier
                     .weight(1f)
@@ -296,7 +305,7 @@ fun SwipeCard(
                 if (onOpen != null) {
                     val haptics = LocalHapticFeedback.current
                     Text(
-                        "Hold for full article ↗",
+                        openLabel,
                         style = typography.labelLarge,
                         color = colors.primary,
                         modifier = Modifier
@@ -307,7 +316,7 @@ fun SwipeCard(
                                     onOpen()
                                 })
                             }
-                            .semantics { onLongClick("Open full article") { onOpen(); true } }
+                            .semantics { onLongClick(openLabel) { onOpen(); true } }
                             .padding(horizontal = 8.dp, vertical = 6.dp),
                     )
                 }
@@ -319,7 +328,7 @@ fun SwipeCard(
 
 private fun footerText(post: RedditPost, isShort: Boolean): String {
     val length = if (isShort) (if (post.isNews) "Headline" else "Quick read") else "${post.readMinutes} min read"
-    if (post.isReddit) return "$length  ·  ▲ ${post.score}  ·  ${post.numComments} comments"
+    if (!post.isNews) return "$length  ·  ▲ ${post.score}  ·  ${post.numComments} comments"
     if (post.publishedAt <= 0L) return length
     val age = DateUtils.getRelativeTimeSpanString(
         post.publishedAt,
