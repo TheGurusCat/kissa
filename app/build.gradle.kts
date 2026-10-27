@@ -24,7 +24,7 @@ android {
         buildConfigField("String", "UPDATE_REPO", "\"TheGurusCat/kissa\"")
         // Cloudflare Worker that calls Reddit's API for the app (source in /relay).
         // Google Cloud "Web application" OAuth client ID (the relay's GOOGLE_CLIENT_ID); empty hides "Continue with Google".
-        buildConfigField("String", "GOOGLE_CLIENT_ID", "\"\"")
+        buildConfigField("String", "GOOGLE_CLIENT_ID", "\"98321916650-qe2ok27ie78hh0cpsmvaip0a1m1dabdd.apps.googleusercontent.com\"")
         buildConfigField("String", "RELAY_URL", "\"https://kissa-relay.abpro.workers.dev\"")
     }
 
