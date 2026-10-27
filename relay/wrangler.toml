@@ -1,20 +1,21 @@
 name = "kissa-relay"
 main = "src/index.js"
 compatibility_date = "2025-06-01"
-# Abella360's account, where the Worker runs and wannabeguru.com sends sign-in email.
-account_id = "3f324c8103f28aee2560dc588bae6df8"
+# Andrebellapro's account, which also owns wannabeguru.com, so the relay sends sign-in email itself.
+account_id = "6646c9a4473bb8fd48897676e1849b3e"
 
-# Secrets (set with `npx wrangler secret put <NAME>`, never committed):
-#   REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET
-#   MAILER_SECRET (same value as the mailer Worker's)
+# Secrets (set with `npx wrangler secret put <NAME>`, never committed): REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET
 
 [vars]
-# Sign-in codes are emailed by the mailer Worker (relay/mailer) in the account that owns wannabeguru.com.
-MAILER_URL = "https://kissa-mailer.abpro.workers.dev"
+SENDER = "Kissa <signin@wannabeguru.com>"
 
-# Accounts, liked cards and daily stats (see src/account.js). Schema changes go in migrations/ and are applied
-# with `npx wrangler d1 migrations apply kissa --remote`.
+# Cloudflare Email Service. Sending to any address (not just verified ones) needs the Workers Paid plan.
+[[send_email]]
+name = "EMAIL"
+
+# Accounts, liked cards, daily stats and Kissa stories (see src/account.js and src/stories.js). Schema changes go
+# in migrations/ and are applied with `npx wrangler d1 migrations apply kissa --remote`.
 [[d1_databases]]
 binding = "DB"
 database_name = "kissa"
-database_id = "e4ff9f5c-44af-4ade-8093-6db2ba045c09"
+database_id = "f7955df5-7005-46ee-836b-fefd441af778"

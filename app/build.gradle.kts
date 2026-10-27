@@ -23,7 +23,7 @@ android {
         // GitHub repo ("owner/name") whose releases the app checks for updates.
         buildConfigField("String", "UPDATE_REPO", "\"TheGurusCat/kissa\"")
         // Cloudflare Worker that calls Reddit's API for the app (source in /relay).
-        buildConfigField("String", "RELAY_URL", "\"https://kissa-relay.abella.workers.dev\"")
+        buildConfigField("String", "RELAY_URL", "\"https://kissa-relay.abpro.workers.dev\"")
     }
 
     // Every release must be signed with the same key, or Android refuses to install it as an update.

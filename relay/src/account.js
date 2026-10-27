@@ -57,20 +57,17 @@ async function sendCode(request, env) {
      ON CONFLICT(email) DO UPDATE SET code_hash = excluded.code_hash, attempts = 0,
        sent_at = excluded.sent_at, expires_at = excluded.expires_at`,
   ).bind(email, await sha256(`${email}:${code}`), now, now + CODE_TTL_MS).run();
-  // Sent by the mailer Worker (relay/mailer), which lives in the account that owns the sending domain.
-  const mailer = await fetch(env.MAILER_URL, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${env.MAILER_SECRET}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
+  try {
+    await env.EMAIL.send({
+      from: env.SENDER,
       to: email,
       subject: `${code} is your Kissa code`,
       text: `Your Kissa sign-in code is ${code}\n\nIt works for 10 minutes. If you didn't ask for it, ignore this email.`,
       html: `<p>Your Kissa sign-in code is</p><p style="font-size:28px;font-weight:bold;letter-spacing:4px">${code}</p>` +
         `<p>It works for 10 minutes. If you didn't ask for it, ignore this email.</p>`,
-    }),
-  });
-  if (!mailer.ok) {
-    console.error("Mailer failed:", mailer.status, await mailer.text());
+    });
+  } catch (error) {
+    console.error("Email sending failed:", error.code, error.message);
     await env.DB.prepare("DELETE FROM sign_in_codes WHERE email = ?").bind(email).run();
     throw new HttpError(502, "Couldn't send the email. Check the address and try again.");
   }

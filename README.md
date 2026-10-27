@@ -69,22 +69,21 @@ the same release key. The key lives outside this repo in `~/Desktop/Codex/local-
 
 ## Reddit relay (`relay/`)
 Reddit blocks unauthenticated requests (HTTP 403) and no longer lets new API apps be created without
-approval, so the app talks to a Cloudflare Worker at `https://kissa-relay.abella.workers.dev`.
+approval, so the app talks to a Cloudflare Worker at `https://kissa-relay.abpro.workers.dev`.
 The Worker uses an existing Reddit "web app" (client credentials) whose ID and secret are stored as
 Worker secrets, never in this repo. It only serves subreddit listings (`GET /r/<sub>/hot|new|top|rising`)
 and caches responses for 2 minutes.
 
-It also serves the optional accounts (`relay/src/account.js`): sign-in codes are emailed with Cloudflare Email Service by the
-mailer Worker (`relay/mailer`, in the Andrebellapro account that owns wannabeguru.com; the relay is in Abella360's) from
-`signin@wannabeguru.com`. Accounts live in the `kissa` D1 (SQL) database: `users` (email, sources, settings),
+It also serves the optional accounts (`relay/src/account.js`): sign-in codes are emailed with Cloudflare Email Service
+from `signin@wannabeguru.com` (the relay runs in the Andrebellapro account, which owns that domain). Accounts live in the `kissa` D1 (SQL) database: `users` (email, sources, settings),
 `sessions`, `sign_in_codes`, `likes` (one row per liked card) and `daily_stats` (stories and seconds per day).
 The app still syncs one JSON snapshot; the relay splits it into those tables. Schema: `relay/migrations/`.
 Setup, once:
 1. Cloudflare dashboard → Compute → Email Service → Email Sending → Onboard Domain → wannabeguru.com.
 2. Sending to any address needs the Workers Paid plan; on the free plan only verified addresses receive codes.
-3. Secrets on `kissa-relay`: `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, and `MAILER_SECRET` (also set on `kissa-mailer`).
+3. Secrets on `kissa-relay`: `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET`.
 
-Redeploy after changing it (`relay/mailer` the same way), and apply new migrations:
+Redeploy after changing it, and apply new migrations:
 ```bash
 cd relay && npx wrangler deploy
 ```
