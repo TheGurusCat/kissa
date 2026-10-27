@@ -34,8 +34,11 @@ async function latestRelease(env, ctx) {
   if (!response) {
     response = await fetch(api, { headers: { "User-Agent": "kissa-site", Accept: "application/vnd.github+json" } });
     if (!response.ok) return null;
-    response = new Response(response.body, { headers: { "Content-Type": "application/json", "Cache-Control": `public, max-age=${CACHE_SECONDS}` } });
-    ctx.waitUntil(cache.put(key, response.clone()));
+    const fresh = await response.json();
+    // A release is published a moment before its APK is attached; don't keep that in the cache.
+    const ready = (fresh.assets ?? []).some((a) => a.name.endsWith(".apk"));
+    response = new Response(JSON.stringify(fresh), { headers: { "Content-Type": "application/json", "Cache-Control": `public, max-age=${CACHE_SECONDS}` } });
+    if (ready) ctx.waitUntil(cache.put(key, response.clone()));
   }
   const release = await response.json();
   const asset = (release.assets ?? []).find((a) => a.name.endsWith(".apk"));
