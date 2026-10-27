@@ -95,7 +95,7 @@ fun CommentsScreen(
                             )
                         }
                         Text(
-                            "  ·  ▲ ${post.score}",
+                            "  ·  ♥ ${compactCount(post.score)}",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f),

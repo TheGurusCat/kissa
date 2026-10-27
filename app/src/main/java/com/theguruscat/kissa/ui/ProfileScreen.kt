@@ -62,7 +62,7 @@ fun ProfileScreen(
                     val score = loaded.stories.sumOf { it.score }
                     Text(
                         "Joined " + DateUtils.getRelativeTimeSpanString(loaded.joinedAt, System.currentTimeMillis(), DateUtils.DAY_IN_MILLIS) +
-                            "  ·  $stories ${if (stories == 1) "story" else "stories"}  ·  ▲ $score",
+                            "  ·  $stories ${if (stories == 1) "story" else "stories"}  ·  ♥ ${compactCount(score)}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -91,7 +91,7 @@ fun ProfileScreen(
                 overlineContent = {
                     Text(
                         DateUtils.getRelativeTimeSpanString(story.publishedAt, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS)
-                            .toString() + "  ·  ▲ ${story.score}  ·  ${story.numComments} comments",
+                            .toString() + "  ·  ♥ ${compactCount(story.score)}  ·  ${story.numComments} comments",
                     )
                 },
                 headlineContent = { Text(story.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },

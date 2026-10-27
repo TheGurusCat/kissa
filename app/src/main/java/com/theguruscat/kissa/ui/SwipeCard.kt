@@ -7,21 +7,26 @@ import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -53,6 +58,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
@@ -69,6 +75,7 @@ import com.theguruscat.kissa.data.RedditPost
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -256,12 +263,36 @@ fun SwipeCard(
             .background(container),
     ) {
         Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 20.dp)) {
-            Text(
-                header,
-                style = typography.labelLarge,
-                modifier = if (onSource == null) Modifier
-                else Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onSource),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    header,
+                    style = typography.labelLarge,
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .then(
+                            if (onSource == null) Modifier
+                            else Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onSource),
+                        ),
+                )
+                Spacer(Modifier.weight(1f))
+                // Likes in the top-right corner: Reddit's score, or a Kissa story's right swipes. News has none.
+                if (!post.isNews) {
+                    Icon(
+                        Icons.Filled.Favorite,
+                        contentDescription = null,
+                        tint = colors.primary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        compactCount(post.score),
+                        style = typography.labelLarge,
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier
+                            .padding(start = 4.dp)
+                            .semantics { contentDescription = "${post.score} likes" },
+                    )
+                }
+            }
             Box(
                 Modifier
                     .weight(1f)
@@ -333,9 +364,17 @@ fun SwipeCard(
     }
 }
 
+/** 950, 1.2k, 34k, 1.5M: short enough for the corner of a card. */
+internal fun compactCount(n: Int): String = when {
+    n < 1_000 -> "$n"
+    n < 10_000 -> "%.1fk".format(Locale.US, n / 1_000.0).replace(".0k", "k")
+    n < 1_000_000 -> "${n / 1_000}k"
+    else -> "%.1fM".format(Locale.US, n / 1_000_000.0).replace(".0M", "M")
+}
+
 private fun footerText(post: RedditPost, isShort: Boolean): String {
     val length = if (isShort) (if (post.isNews) "Headline" else "Quick read") else "${post.readMinutes} min read"
-    if (!post.isNews) return "$length  ·  ▲ ${post.score}  ·  ${post.numComments} comments"
+    if (!post.isNews) return "$length  ·  ${post.numComments} comments"
     if (post.publishedAt <= 0L) return length
     val age = DateUtils.getRelativeTimeSpanString(
         post.publishedAt,
