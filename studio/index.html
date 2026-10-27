@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kissa Studio</title>
+<style>
+  :root {
+    --bg: #faf8f5; --panel: #ffffff; --ink: #1f1d1a; --muted: #6f6a63; --line: #e6e1da;
+    --accent: #c2410c; --accent-ink: #ffffff; --soft: #f3eee7; --danger: #b42318;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513; --panel: #1f1e1b; --ink: #ece8e1; --muted: #9c968d; --line: #33302b;
+      --accent: #fb923c; --accent-ink: #1a1009; --soft: #2a2824; --danger: #f97066;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 24px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 18px; margin: 0; }
+  header nav { display: flex; gap: 4px; margin-left: auto; }
+  main { display: grid; grid-template-columns: 260px 1fr; min-height: calc(100vh - 57px); }
+  aside { border-right: 1px solid var(--line); padding: 16px; }
+  section.view { padding: 24px 32px; max-width: 860px; }
+  h2 { font-size: 20px; margin: 0 0 4px; }
+  h3 { font-size: 15px; margin: 24px 0 8px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.danger { color: var(--danger); }
+  button.tab[aria-pressed="true"] { background: var(--soft); border-color: var(--muted); }
+  button:disabled { opacity: .5; cursor: default; }
+  input, textarea, select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 100%; }
+  textarea { resize: vertical; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  .writer { display: block; width: 100%; text-align: left; border: 0; border-radius: 8px; padding: 8px 10px; margin-bottom: 2px; background: none; }
+  .writer:hover { background: var(--soft); }
+  .writer[aria-current="true"] { background: var(--soft); font-weight: 600; }
+  .writer .small { font-weight: normal; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; }
+  .card h4 { margin: 0 0 4px; font-size: 16px; }
+  .body { white-space: pre-wrap; margin-top: 10px; }
+  .clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .badge { font-size: 11px; background: var(--soft); border-radius: 999px; padding: 1px 8px; color: var(--muted); }
+  .comment { border-top: 1px solid var(--line); padding: 8px 0; font-size: 14px; }
+  .error { color: var(--danger); margin: 8px 0; }
+  .empty { padding: 24px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 12px; }
+  details summary { cursor: pointer; color: var(--muted); }
+  @media (max-width: 760px) {
+    main { grid-template-columns: 1fr; }
+    header > span { display: none; }
+    aside { border-right: 0; border-bottom: 1px solid var(--line); }
+    section.view { padding: 16px; }
+    .grid2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Kissa Studio</h1>
+  <span class="muted small">House writers, drafted with Claude, posted only when you say so</span>
+  <nav>
+    <button class="tab" data-view="writers" aria-pressed="true">Writers</button>
+    <button class="tab" data-view="feed" aria-pressed="false">Stories feed</button>
+  </nav>
+</header>
+<main>
+  <aside>
+    <div class="row" style="justify-content: space-between; margin-bottom: 8px">
+      <strong>Writers</strong>
+      <button id="new-writer">+ New</button>
+    </div>
+    <div id="writers"><p class="muted small">Loading…</p></div>
+  </aside>
+  <section class="view" id="view"></section>
+</main>
+
+<script>
+const state = { writers: [], selected: null, view: "writers", draft: null };
+const $ = (selector, root = document) => root.querySelector(selector);
+const esc = (text) => String(text ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const ago = (ms) => {
+  const minutes = Math.round((Date.now() - ms) / 60000);
+  if (minutes < 60) return `${Math.max(minutes, 1)} min ago`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)} h ago`;
+  return new Date(ms).toLocaleDateString();
+};
+const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const words = (text) => (text.trim().match(/\S+/g) || []).length;
+
+async function api(method, path, body) {
+  const response = await fetch(path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+  return data;
+}
+
+// --- Sidebar ---
+
+async function loadWriters() {
+  try {
+    state.writers = (await api("GET", "/api/writers")).writers;
+    renderWriters();
+  } catch (error) {
+    $("#writers").innerHTML = `<p class="error small">${esc(error.message)}</p>`;
+  }
+}
+
+function renderWriters() {
+  const list = $("#writers");
+  if (!state.writers.length) {
+    list.innerHTML = `<p class="muted small">No house writers yet. Press + New to make the first one.</p>`;
+    return;
+  }
+  list.innerHTML = state.writers.map((writer) => `
+    <button class="writer" data-username="${esc(writer.username)}" aria-current="${writer.username === state.selected}">
+      u/${esc(writer.username)}
+      <div class="small muted">${count(writer.stories, "story", "stories")} · ${count(writer.comments, "comment", "comments")}${writer.voice ? "" : " · no voice yet"}</div>
+    </button>`).join("");
+}
+
+$("#writers").addEventListener("click", (event) => {
+  const button = event.target.closest(".writer");
+  if (!button) return;
+  state.selected = button.dataset.username;
+  state.draft = null;
+  setView("writers");
+});
+
+$("#new-writer").addEventListener("click", () => {
+  state.selected = null;
+  setView("new");
+});
+
+document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => setView(tab.dataset.view)));
+
+function setView(view) {
+  state.view = view;
+  document.querySelectorAll(".tab").forEach((tab) => tab.setAttribute("aria-pressed", String(tab.dataset.view === view)));
+  renderWriters();
+  if (view === "feed") return renderFeed();
+  if (view === "new") return renderNewWriter();
+  renderWriter();
+}
+
+// --- Voice form (shared by New writer and a writer's page) ---
+
+function voiceFields(writer = {}) {
+  return `
+    <label>Who they are and how they write</label>
+    <textarea name="voice" rows="5" placeholder="e.g. 34, night-shift nurse in Mazatlán. Dry, a bit tired, funny without trying. Short sentences. Notices small things about patients and her neighbours.">${esc(writer.voice)}</textarea>
+    <label>What they write about (optional)</label>
+    <input name="topics" value="${esc(writer.topics)}" placeholder="work stories, family, the neighbourhood, small wins">
+    <div class="grid2">
+      <div><label>Language</label>
+        <select name="language">
+          <option value="en" ${writer.language !== "es" ? "selected" : ""}>English</option>
+          <option value="es" ${writer.language === "es" ? "selected" : ""}>Spanish (Mazatlán)</option>
+        </select></div>
+      <div><label>Length</label>
+        <select name="length">
+          ${["short", "medium", "long"].map((length) => `<option value="${length}" ${(writer.length || "medium") === length ? "selected" : ""}>${length[0].toUpperCase() + length.slice(1)}</option>`).join("")}
+        </select></div>
+    </div>`;
+}
+
+const formData = (form) => Object.fromEntries(new FormData(form));
+
+function renderNewWriter() {
+  $("#view").innerHTML = `
+    <h2>New house writer</h2>
+    <p class="muted">Creates a house account on Kissa. Readers see the Kissa badge next to its name.</p>
+    <form id="new-form" class="card">
+      <label>Username</label>
+      <input name="username" required pattern="[A-Za-z0-9_]{3,20}" placeholder="3 to 20 letters, numbers or underscores">
+      ${voiceFields()}
+      <p class="error" id="new-error"></p>
+      <button class="primary">Create writer</button>
+    </form>`;
+  $("#new-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = $("button", event.target);
+    button.disabled = true;
+    try {
+      const { username } = await api("POST", "/api/writers", formData(event.target));
+      state.selected = username;
+      await loadWriters();
+      setView("writers");
+    } catch (error) {
+      $("#new-error").textContent = error.message;
+      button.disabled = false;
+    }
+  });
+}
+
+// --- A writer's page ---
+
+async function renderWriter() {
+  const writer = state.writers.find((w) => w.username === state.selected);
+  if (!writer) {
+    $("#view").innerHTML = `<div class="empty">Pick a writer on the left, or make a new one.</div>`;
+    return;
+  }
+  $("#view").innerHTML = `
+    <h2>u/${esc(writer.username)} <span class="badge">house writer</span></h2>
+    <p class="muted small">Joined ${new Date(writer.joinedAt).toLocaleDateString()} · ${count(writer.stories, "story", "stories")} · ${count(writer.comments, "comment", "comments")}</p>
+
+    <details class="card" ${writer.voice ? "" : "open"}>
+      <summary>Voice</summary>
+      <form id="voice-form">
+        ${voiceFields(writer)}
+        <div class="row" style="margin-top: 12px"><button>Save voice</button><span class="small muted" id="voice-status"></span></div>
+      </form>
+    </details>
+
+    <h3>Write a story</h3>
+    <div class="card" id="draft-box"></div>
+
+    <h3>Posted stories</h3>
+    <div id="stories"><p class="muted small">Loading…</p></div>`;
+
+  $("#voice-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      Object.assign(writer, (await api("PUT", `/api/writers/${writer.username}`, formData(event.target))).voice);
+      $("#voice-status").textContent = "Saved.";
+      renderDraftBox(writer);
+      renderWriters();
+    } catch (error) {
+      $("#voice-status").textContent = error.message;
+    }
+  });
+  renderDraftBox(writer);
+  loadStories(writer);
+}
+
+function renderDraftBox(writer) {
+  const box = $("#draft-box");
+  const draft = state.draft;
+  if (!draft) {
+    box.innerHTML = `
+      <label>Idea (optional; leave empty and Claude picks one)</label>
+      <input id="idea" placeholder="e.g. a patient who keeps asking for the same song">
+      <p class="error" id="draft-error"></p>
+      <div class="row">
+        <button class="primary" id="generate" ${writer.voice ? "" : "disabled"}>Draft with Claude</button>
+        ${writer.voice ? `<span class="small muted">Takes about a minute. Nothing is posted yet.</span>` : `<span class="small muted">Save a voice first.</span>`}
+      </div>`;
+    $("#generate").addEventListener("click", () => generate(writer));
+    return;
+  }
+  box.innerHTML = `
+    <label>Title</label>
+    <input id="draft-title" value="${esc(draft.title)}">
+    <label>Story <span id="draft-words">${words(draft.body)} words</span></label>
+    <textarea id="draft-body" rows="16">${esc(draft.body)}</textarea>
+    <p class="error" id="draft-error"></p>
+    <div class="row">
+      <button class="primary" id="post">Post as u/${esc(writer.username)}</button>
+      <button id="again">Try again</button>
+      <button class="danger" id="discard">Discard</button>
+      <span class="small muted">You can edit it before posting.</span>
+    </div>`;
+  $("#draft-body").addEventListener("input", (event) => { $("#draft-words").textContent = `${words(event.target.value)} words`; });
+  $("#again").addEventListener("click", () => generate(writer, draft.idea));
+  $("#discard").addEventListener("click", () => { state.draft = null; renderDraftBox(writer); });
+  $("#post").addEventListener("click", async (event) => {
+    event.target.disabled = true;
+    try {
+      await api("POST", "/api/stories", { username: writer.username, title: $("#draft-title").value, body: $("#draft-body").value });
+      state.draft = null;
+      writer.stories++;
+      renderWriters();
+      renderDraftBox(writer);
+      loadStories(writer);
+    } catch (error) {
+      $("#draft-error").textContent = error.message;
+      event.target.disabled = false;
+    }
+  });
+}
+
+async function generate(writer, idea = $("#idea")?.value ?? "") {
+  const box = $("#draft-box");
+  box.querySelectorAll("button").forEach((button) => (button.disabled = true));
+  const status = document.createElement("p");
+  status.className = "muted small";
+  status.textContent = "Claude is writing…";
+  box.append(status);
+  try {
+    state.draft = { ...(await api("POST", `/api/writers/${writer.username}/draft`, { idea })), idea };
+    renderDraftBox(writer);
+  } catch (error) {
+    status.remove();
+    box.querySelectorAll("button").forEach((button) => (button.disabled = false));
+    $("#draft-error").textContent = error.message;
+  }
+}
+
+async function loadStories(writer) {
+  const list = $("#stories");
+  try {
+    const { stories } = await api("GET", `/api/writers/${writer.username}`);
+    if (state.selected !== writer.username) return;
+    list.innerHTML = stories.length ? "" : `<div class="empty">Nothing posted yet.</div>`;
+    stories.forEach((story) => list.append(storyCard(story, { canDelete: true, onDeleted: () => { writer.stories--; renderWriters(); } })));
+  } catch (error) {
+    list.innerHTML = `<p class="error">${esc(error.message)}</p>`;
+  }
+}
+
+// --- Story cards (writer page and feed) ---
+
+function storyCard(story, { canDelete = false, onDeleted } = {}) {
+  const card = document.createElement("article");
+  card.className = "card";
+  card.innerHTML = `
+    <h4>${esc(story.title)}</h4>
+    <div class="small muted">u/${esc(story.author)} ${story.isHouse ? `<span class="badge">Kissa</span>` : ""} · ${ago(story.publishedAt)} · ♥ ${story.score} · 💬 ${story.numComments} · ${words(story.body)} words</div>
+    <div class="body clamp">${esc(story.body)}</div>
+    <div class="row" style="margin-top: 10px">
+      <button data-act="read">Read all</button>
+      ${story.numComments ? `<button data-act="comments">Comments (${story.numComments})</button>` : ""}
+      <a class="small muted" href="${esc(story.permalink)}" target="_blank" rel="noopener">Open on the web ↗</a>
+      ${canDelete ? `<button class="danger" data-act="delete" style="margin-left: auto">Delete</button>` : ""}
+    </div>
+    <div class="comments"></div>`;
+  card.addEventListener("click", async (event) => {
+    const act = event.target.dataset?.act;
+    if (act === "read") {
+      const body = $(".body", card);
+      body.classList.toggle("clamp");
+      event.target.textContent = body.classList.contains("clamp") ? "Read all" : "Show less";
+    } else if (act === "comments") {
+      const box = $(".comments", card);
+      if (box.innerHTML) { box.innerHTML = ""; return; }
+      box.innerHTML = `<p class="muted small">Loading…</p>`;
+      try {
+        const { comments } = await api("GET", `/api/stories/${story.id}/comments`);
+        box.innerHTML = comments.map((comment) => `
+          <div class="comment"><span class="small muted">u/${esc(comment.author)} ${comment.isHouse ? `<span class="badge">Kissa</span>` : ""} · ${ago(comment.createdAt)}</span><div>${esc(comment.body)}</div></div>`).join("");
+      } catch (error) {
+        box.innerHTML = `<p class="error small">${esc(error.message)}</p>`;
+      }
+    } else if (act === "delete") {
+      if (!confirm(`Delete “${story.title}” from Kissa? Its comments and likes go too.`)) return;
+      try {
+        await api("DELETE", `/api/stories/${story.id.replace(/^k_/, "")}`);
+        card.remove();
+        onDeleted?.();
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+  });
+  return card;
+}
+
+async function renderFeed() {
+  $("#view").innerHTML = `
+    <h2>Stories feed</h2>
+    <p class="muted">The newest 100 stories on Kissa, house writers and readers together, the way the app shows them.</p>
+    <div id="feed"><p class="muted small">Loading…</p></div>`;
+  try {
+    const { stories } = await api("GET", "/api/stories");
+    const feed = $("#feed");
+    feed.innerHTML = stories.length ? "" : `<div class="empty">No stories yet.</div>`;
+    stories.forEach((story) => feed.append(storyCard(story)));
+  } catch (error) {
+    $("#feed").innerHTML = `<p class="error">${esc(error.message)}</p>`;
+  }
+}
+
+loadWriters().then(() => setView("writers"));
+</script>
+</body>
+</html>
