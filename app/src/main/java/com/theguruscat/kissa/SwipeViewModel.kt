@@ -17,6 +17,7 @@ import com.theguruscat.kissa.data.isQuickReadSubreddit
 import com.theguruscat.kissa.data.RedditPost
 import com.theguruscat.kissa.data.RedditRepository
 import com.theguruscat.kissa.data.StoriesRepository
+import com.theguruscat.kissa.notify.ActivityNotifier
 import com.theguruscat.kissa.data.newsFeed
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -128,6 +129,8 @@ data class SwipeUiState(
     val showSwipeHint: Boolean = false,
     val account: AccountState = AccountState(),
     val writing: WritingState = WritingState(),
+    /** Unread likes and comments on this account's stories (the badge on Notifications). */
+    val unreadNotifications: Int = 0,
 ) {
     /** The cards the swipe screen shows: the deck narrowed to the current [readMode]. */
     val visibleDeck: List<RedditPost> get() = deck.filter(readMode::allows)
@@ -426,8 +429,48 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
     fun signOut() {
         accountAction {
             account.signOut()
-            _state.update { it.copy(account = AccountState()) }
+            ActivityNotifier.cancel(getApplication())
+            _state.update { it.copy(account = AccountState(), unreadNotifications = 0) }
         }
+    }
+
+    /** Deletes the account and everything it posted or synced; what's on this phone stays. */
+    fun deleteAccount() {
+        accountAction {
+            account.deleteAccount()
+            ActivityNotifier.cancel(getApplication())
+            _state.update { it.copy(account = AccountState(), unreadNotifications = 0, writing = WritingState()) }
+        }
+    }
+
+    /** Hides [username]'s stories and comments (or shows them again); their cards leave the deck at once. */
+    fun setBlocked(username: String, blocked: Boolean, onDone: (String?) -> Unit = {}) {
+        viewModelScope.launch {
+            val error = runCatching { stories.setBlocked(username, blocked) }.exceptionOrNull()?.message
+            if (error == null && blocked) {
+                _state.update { state ->
+                    state.copy(deck = state.deck.filterNot { it.isOriginal && it.author.equals(username, ignoreCase = true) })
+                }
+            }
+            onDone(error)
+        }
+    }
+
+    /** Refreshes the unread count shown on the Notifications menu item. */
+    fun refreshNotifications() {
+        if (!account.isSignedIn) return
+        viewModelScope.launch {
+            runCatching { stories.notifications().second }.onSuccess { unread ->
+                _state.update { it.copy(unreadNotifications = unread) }
+            }
+        }
+    }
+
+    /** The Notifications screen was opened: everything shown there counts as read. */
+    fun markNotificationsRead(newestId: Long) {
+        ActivityNotifier.markSeen(getApplication(), newestId)
+        _state.update { it.copy(unreadNotifications = 0) }
+        viewModelScope.launch { runCatching { stories.markNotificationsRead() } }
     }
 
     fun syncNow() {
@@ -454,8 +497,12 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
         try {
             if (sync.sync(firstTime, forceUpload)) seenAtUpload = seen.size
             _state.update { it.copy(account = it.account.copy(lastSyncedAt = account.syncedAt).withProfile()) }
+            // Signed in and online: keep the background check for likes and comments running, and update the badge.
+            ActivityNotifier.schedule(getApplication())
+            refreshNotifications()
         } catch (e: SignedOutException) {
-            _state.update { it.copy(account = AccountState(error = e.message)) }
+            ActivityNotifier.cancel(getApplication())
+            _state.update { it.copy(account = AccountState(error = e.message), unreadNotifications = 0) }
             if (!quiet) throw e
         } catch (e: Exception) {
             if (!quiet) throw e

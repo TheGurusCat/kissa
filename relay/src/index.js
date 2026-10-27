@@ -6,6 +6,7 @@
 import { handleAccount, json } from "./account.js";
 import { handleStories } from "./stories.js";
 import { handleApi } from "./api.js";
+import { handlePages } from "./pages.js";
 
 const USER_AGENT = "cloudflare-worker:kissa-relay:v1 (by /u/titsonaplane)";
 const LISTING_PATH = /^\/r\/([A-Za-z0-9_]{2,21})\/(hot|new|top|rising)$/;
@@ -40,6 +41,8 @@ export default {
     const url = new URL(request.url);
     const account = await handleAccount(request, env, url);
     if (account) return account;
+    const page = handlePages(request, env, url);
+    if (page) return page;
     const api = await handleApi(request, env, url);
     if (api) return api;
     const stories = await handleStories(request, env, url);

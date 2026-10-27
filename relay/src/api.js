@@ -9,7 +9,7 @@
 //   DELETE /api/stories/<id>, /api/comments/<id>           removes one (any author)
 
 import { HttpError, RESERVED_USERNAMES, USERNAME_PATTERN, json, readJson } from "./account.js";
-import { CARD_SELECT, MAX_COMMENT, card, comment, newId, removeComment, removeStory, validStory } from "./stories.js";
+import { CARD_SELECT, MAX_COMMENT, card, insertComment, newId, removeComment, removeStory, validStory } from "./stories.js";
 
 const ID = "([a-z0-9]{10})";
 
@@ -86,13 +86,9 @@ async function postComment(request, env) {
   const body = String(input.body ?? "").trim();
   if (!body) throw new HttpError(400, "The comment is empty.");
   if (body.length > MAX_COMMENT) throw new HttpError(400, `Keep comments under ${MAX_COMMENT} characters.`);
-  if (!(await env.DB.prepare("SELECT 1 FROM stories WHERE id = ?").bind(storyId).first())) {
-    throw new HttpError(404, "No story with that ID.");
-  }
-  const row = { id: newId(), body, created_at: Date.now(), author: author.username, author_is_house: 1 };
-  await env.DB.prepare("INSERT INTO comments (id, story_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)")
-    .bind(row.id, storyId, author.id, body, row.created_at).run();
-  return json({ comment: comment(row) }, 200);
+  const story = await env.DB.prepare("SELECT author_id FROM stories WHERE id = ?").bind(storyId).first();
+  if (!story) throw new HttpError(404, "No story with that ID.");
+  return json({ comment: await insertComment(env, storyId, story.author_id, author, body) }, 200);
 }
 
 /** Only house accounts can be posted as, so the API can never speak for a real reader. */

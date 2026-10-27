@@ -16,9 +16,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -26,21 +28,29 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.theguruscat.kissa.AccountState
 import com.theguruscat.kissa.data.RedditPost
 import com.theguruscat.kissa.data.StoriesRepository
 import com.theguruscat.kissa.data.UserProfile
 
-/** Someone's page: when they joined and every story they've posted, newest first; tap one for its comments. */
+/**
+ * Someone's page: when they joined and every story they've posted, newest first; tap one for its comments.
+ * Signed-in readers can block them from here ([onBlock]), which hides their stories and comments.
+ */
 @Composable
 fun ProfileScreen(
     username: String,
+    account: AccountState,
     community: StoriesRepository,
     onOpenStory: (RedditPost) -> Unit,
+    onBlock: (username: String, blocked: Boolean, onDone: (String?) -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var profile by remember { mutableStateOf<UserProfile?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(username) {
+    // Bumped after unblocking, to load their stories again.
+    var version by remember { mutableIntStateOf(0) }
+    LaunchedEffect(username, version) {
         runCatching { community.profile(username) }
             .onSuccess { profile = it }
             .onFailure { error = it.message }
@@ -66,6 +76,28 @@ fun ProfileScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                val isMe = account.username.equals(username, ignoreCase = true)
+                if (loaded != null && account.email != null && !isMe && !loaded.isHouse) {
+                    TextButton(onClick = {
+                        val block = !loaded.blocked
+                        onBlock(loaded.username, block) { failure ->
+                            when {
+                                failure != null -> error = failure
+                                block -> profile = loaded.copy(blocked = true, stories = emptyList())
+                                else -> version++
+                            }
+                        }
+                    }) {
+                        Text(if (loaded.blocked) "Unblock u/${loaded.username}" else "Block u/${loaded.username}")
+                    }
+                    if (loaded.blocked) {
+                        Text(
+                            "You blocked this account. Their stories and comments are hidden from you.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }

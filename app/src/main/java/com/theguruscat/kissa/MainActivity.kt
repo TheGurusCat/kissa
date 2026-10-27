@@ -1,10 +1,15 @@
 package com.theguruscat.kissa
 
+import android.Manifest
+import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -17,6 +22,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Newspaper
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
@@ -42,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
@@ -63,11 +70,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.theguruscat.kissa.data.GoogleSignIn
 import com.theguruscat.kissa.data.RedditPost
+import com.theguruscat.kissa.notify.ActivityNotifier
 import com.theguruscat.kissa.share.CardSharer
 import com.theguruscat.kissa.ui.AccountScreen
 import com.theguruscat.kissa.ui.CommentsScreen
 import com.theguruscat.kissa.ui.ModerationScreen
 import com.theguruscat.kissa.ui.NewsSourcesScreen
+import com.theguruscat.kissa.ui.NotificationsScreen
 import com.theguruscat.kissa.ui.ProfileScreen
 import com.theguruscat.kissa.ui.SavedScreen
 import com.theguruscat.kissa.ui.SettingsScreen
@@ -84,6 +93,8 @@ import kotlinx.coroutines.launch
 enum class Screen(val title: String, val icon: ImageVector) {
     Swipe("Swipe", Icons.Filled.Style),
     Saved("Liked", Icons.Filled.Favorite),
+    // Shown only when signed in.
+    Notifications("Notifications", Icons.Filled.Notifications),
     News("News sources", Icons.Filled.Newspaper),
     Subreddits("Subreddits", Icons.Filled.Forum),
     Stats("Stats", Icons.Filled.BarChart),
@@ -109,7 +120,9 @@ class MainActivity : ComponentActivity() {
             KissaTheme {
                 val vm: SwipeViewModel = viewModel()
                 val state by vm.state.collectAsStateWithLifecycle()
-                var screen by rememberSaveable { mutableStateOf(Screen.Swipe) }
+                // A tapped "liked your story" notification opens straight on Notifications.
+                val fromNotification = intent.getBooleanExtra(ActivityNotifier.EXTRA_OPEN_NOTIFICATIONS, false)
+                var screen by rememberSaveable { mutableStateOf(if (fromNotification) Screen.Notifications else Screen.Swipe) }
                 // Comments and profiles can lead to each other, so they stack; the last one shows.
                 val details = remember { mutableStateListOf<Detail>() }
                 val detail = details.lastOrNull()
@@ -125,6 +138,16 @@ class MainActivity : ComponentActivity() {
                 LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
                     updates.onResume()
                     vm.onAppVisible()
+                    vm.refreshNotifications()
+                }
+                // Once signed in, ask (once) to show likes and comments as Android notifications.
+                val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+                LaunchedEffect(state.account.email) {
+                    val prefs = getSharedPreferences("notifier_permission", Context.MODE_PRIVATE)
+                    if (state.account.email != null && Build.VERSION.SDK_INT >= 33 && !prefs.getBoolean("asked", false)) {
+                        prefs.edit().putBoolean("asked", true).apply()
+                        askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
                 }
                 LifecycleEventEffect(Lifecycle.Event.ON_STOP) { vm.onAppHidden() }
                 UpdateDialog(updateState, onUpdate = updates::update, onDismiss = updates::dismiss)
@@ -148,12 +171,21 @@ class MainActivity : ComponentActivity() {
                                         style = MaterialTheme.typography.titleLarge,
                                         modifier = Modifier.padding(start = 28.dp, top = 24.dp, bottom = 16.dp),
                                     )
-                                    Screen.entries.filter { it != Screen.Moderation || state.account.isAdmin }.forEach { item ->
+                                    Screen.entries.filter { item ->
+                                        when (item) {
+                                            Screen.Moderation -> state.account.isAdmin
+                                            Screen.Notifications -> state.account.email != null
+                                            else -> true
+                                        }
+                                    }.forEach { item ->
                                         NavigationDrawerItem(
                                             label = { Text(item.title) },
                                             icon = { Icon(item.icon, contentDescription = null) },
                                             badge = {
                                                 if (item == Screen.Saved && state.saved.isNotEmpty()) Text("${state.saved.size}")
+                                                if (item == Screen.Notifications && state.unreadNotifications > 0) {
+                                                    Text("${state.unreadNotifications}", color = MaterialTheme.colorScheme.primary)
+                                                }
                                             },
                                             selected = screen == item,
                                             onClick = { screen = item; details.clear(); scope.launch { drawerState.close() } },
@@ -248,6 +280,7 @@ class MainActivity : ComponentActivity() {
                                                     account = state.account,
                                                     community = vm.community,
                                                     onOpenProfile = openProfile,
+                                                    onBlock = vm::setBlocked,
                                                     onStoryRemoved = { post ->
                                                         vm.forgetStory(post.id)
                                                         details.removeLastOrNull()
@@ -255,8 +288,10 @@ class MainActivity : ComponentActivity() {
                                                 )
                                                 is Detail.Profile -> ProfileScreen(
                                                     username = detail.username,
+                                                    account = state.account,
                                                     community = vm.community,
                                                     onOpenStory = openComments,
+                                                    onBlock = vm::setBlocked,
                                                 )
                                             }
                                         }
@@ -324,6 +359,11 @@ class MainActivity : ComponentActivity() {
                                                     onSave = vm::saveStory,
                                                     onDelete = vm::deleteStory,
                                                 )
+                                                Screen.Notifications -> NotificationsScreen(
+                                                    community = vm.community,
+                                                    onSeen = vm::markNotificationsRead,
+                                                    onOpenStory = openComments,
+                                                )
                                                 Screen.Moderation -> ModerationScreen(
                                                     community = vm.community,
                                                     onStoryRemoved = vm::forgetStory,
@@ -341,6 +381,9 @@ class MainActivity : ComponentActivity() {
                                                     onVerifyCode = vm::verifySignInCode,
                                                     onCancel = vm::cancelSignIn,
                                                     onSetUsername = vm::setUsername,
+                                                    onDeleteAccount = vm::deleteAccount,
+                                                    community = vm.community,
+                                                    onUnblock = { name -> vm.setBlocked(name, false) },
                                                     onSyncNow = vm::syncNow,
                                                     onSignOut = vm::signOut,
                                                 )

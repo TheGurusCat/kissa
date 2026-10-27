@@ -59,6 +59,7 @@ fun CommentsScreen(
     community: StoriesRepository,
     onOpenProfile: (String) -> Unit,
     onStoryRemoved: (RedditPost) -> Unit,
+    onBlock: (username: String, blocked: Boolean, onDone: (String?) -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -156,6 +157,18 @@ fun CommentsScreen(
                             }
                         },
                         onReport = { reporting = false to comment.id },
+                        // Blocking hides everything they wrote here at once.
+                        onBlock = if (account.email != null && !comment.isHouse && !account.username.equals(comment.author, ignoreCase = true)) {
+                            {
+                                onBlock(comment.author, true) { failure ->
+                                    if (failure != null) error = failure
+                                    else comments = comments.orEmpty().filterNot { it.author == comment.author }
+                                }
+                            }
+                        } else {
+                            null
+                        },
+                        blockLabel = "Block u/${comment.author}",
                     )
                 }
             }
@@ -226,8 +239,15 @@ fun CommentsScreen(
 }
 
 @Composable
-private fun ItemMenu(canDelete: Boolean, canReport: Boolean, onDelete: () -> Unit, onReport: () -> Unit) {
-    if (!canDelete && !canReport) return
+private fun ItemMenu(
+    canDelete: Boolean,
+    canReport: Boolean,
+    onDelete: () -> Unit,
+    onReport: () -> Unit,
+    onBlock: (() -> Unit)? = null,
+    blockLabel: String = "Block",
+) {
+    if (!canDelete && !canReport && onBlock == null) return
     var open by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
     Box {
@@ -235,6 +255,7 @@ private fun ItemMenu(canDelete: Boolean, canReport: Boolean, onDelete: () -> Uni
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             if (canDelete) DropdownMenuItem(text = { Text("Delete") }, onClick = { open = false; confirm = true })
             if (canReport) DropdownMenuItem(text = { Text("Report") }, onClick = { open = false; onReport() })
+            if (onBlock != null) DropdownMenuItem(text = { Text(blockLabel) }, onClick = { open = false; onBlock() })
         }
     }
     if (confirm) {

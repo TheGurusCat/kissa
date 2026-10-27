@@ -6,7 +6,27 @@ import org.json.JSONObject
 /** [isHouse]: written by one of Kissa's own accounts, which readers see with a badge. */
 data class Comment(val id: String, val author: String, val body: String, val createdAt: Long, val isHouse: Boolean = false)
 
-data class UserProfile(val username: String, val joinedAt: Long, val stories: List<RedditPost>, val isHouse: Boolean = false)
+/** [blocked]: the signed-in reader blocked this account, so its stories aren't listed. */
+data class UserProfile(
+    val username: String,
+    val joinedAt: Long,
+    val stories: List<RedditPost>,
+    val isHouse: Boolean = false,
+    val blocked: Boolean = false,
+)
+
+/** Someone liked or commented on one of your stories. [storyId] is a card ID like "k_abc123defg". */
+data class Notification(
+    val id: Long,
+    val isComment: Boolean,
+    val storyId: String,
+    val storyTitle: String,
+    val actor: String,
+    val actorIsHouse: Boolean,
+    val comment: String?,
+    val createdAt: Long,
+    val read: Boolean,
+)
 
 /** An open report, as the Moderation screen shows it. [targetId] is a story or comment ID without "k_". */
 data class Report(
@@ -72,7 +92,47 @@ class StoriesRepository(private val account: AccountRepository) {
             json.optLong("joinedAt"),
             posts(json.getJSONArray("stories")),
             json.optBoolean("isHouse"),
+            json.optBoolean("blocked"),
         )
+    }
+
+    /** One story's card, for opening it from a notification. */
+    suspend fun story(id: String): RedditPost =
+        RedditPost.fromJson(account.call("GET", "/stories/${bare(id)}", null).getJSONObject("story"))
+
+    /** Hides (or shows again) [username]'s stories and comments for this account. */
+    suspend fun setBlocked(username: String, blocked: Boolean) {
+        account.call(if (blocked) "POST" else "DELETE", "/u/$username/block", null)
+    }
+
+    suspend fun blocked(): List<String> {
+        val array = account.call("GET", "/me/blocks", null).getJSONArray("blocked")
+        return List(array.length()) { array.getString(it) }
+    }
+
+    /** The newest likes and comments on this account's stories, and how many are unread. */
+    suspend fun notifications(): Pair<List<Notification>, Int> {
+        val json = account.call("GET", "/notifications", null)
+        val array = json.getJSONArray("notifications")
+        val list = List(array.length()) { i ->
+            val n = array.getJSONObject(i)
+            Notification(
+                id = n.getLong("id"),
+                isComment = n.getString("kind") == "comment",
+                storyId = n.getString("storyId"),
+                storyTitle = n.optString("storyTitle"),
+                actor = n.optString("actor"),
+                actorIsHouse = n.optBoolean("actorIsHouse"),
+                comment = n.optString("comment").takeUnless { n.isNull("comment") },
+                createdAt = n.optLong("createdAt"),
+                read = n.optBoolean("read"),
+            )
+        }
+        return list to json.optInt("unread")
+    }
+
+    suspend fun markNotificationsRead() {
+        account.call("POST", "/notifications/read", null)
     }
 
     /** Reports a story (a card ID) or a comment to the admins. */

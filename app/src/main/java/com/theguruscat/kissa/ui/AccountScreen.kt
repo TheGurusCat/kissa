@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -20,17 +21,22 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.theguruscat.kissa.AccountState
+import com.theguruscat.kissa.BuildConfig
 import com.theguruscat.kissa.data.GoogleSignIn
+import com.theguruscat.kissa.data.StoriesRepository
 
 /**
  * The account: signed out, it offers "Continue with Google" or an email and then the 6-digit code sent
@@ -47,6 +53,9 @@ fun AccountScreen(
     onSetUsername: (String) -> Unit,
     onSyncNow: () -> Unit,
     onSignOut: () -> Unit,
+    onDeleteAccount: () -> Unit,
+    community: StoriesRepository,
+    onUnblock: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -57,6 +66,8 @@ fun AccountScreen(
             account.email != null -> {
                 Username(account, onSetUsername)
                 SignedIn(account, onSyncNow, onSignOut)
+                BlockedAccounts(community, onUnblock)
+                DeleteAccount(account, onDeleteAccount)
             }
             account.pendingEmail != null -> EnterCode(account, onVerifyCode, onRequestCode, onCancel)
             else -> EnterEmail(account, onGoogle, onRequestCode)
@@ -64,6 +75,7 @@ fun AccountScreen(
         account.error?.let {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
         }
+        LegalLinks()
     }
 }
 
@@ -196,6 +208,60 @@ private fun SignedIn(account: AccountState, onSyncNow: () -> Unit, onSignOut: ()
     )
     BusyButton("Sync now", account.isBusy, enabled = true, onClick = onSyncNow)
     OutlinedButton(onClick = onSignOut, enabled = !account.isBusy) { Text("Sign out") }
+}
+
+/** Accounts this reader blocked, each with Unblock; hidden when there are none. */
+@Composable
+private fun BlockedAccounts(community: StoriesRepository, onUnblock: (String) -> Unit) {
+    var blocked by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(Unit) { runCatching { community.blocked() }.onSuccess { blocked = it } }
+    if (blocked.isEmpty()) return
+    Text("Blocked accounts", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
+    blocked.forEach { name ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("u/$name", modifier = Modifier.weight(1f))
+            TextButton(onClick = { onUnblock(name); blocked = blocked - name }) { Text("Unblock") }
+        }
+    }
+}
+
+@Composable
+private fun DeleteAccount(account: AccountState, onDeleteAccount: () -> Unit) {
+    var confirm by remember { mutableStateOf(false) }
+    TextButton(
+        onClick = { confirm = true },
+        enabled = !account.isBusy,
+        modifier = Modifier.padding(top = 16.dp),
+    ) {
+        Text("Delete account", color = MaterialTheme.colorScheme.error)
+    }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text("Delete your account?") },
+            text = {
+                Text(
+                    "This removes your account, username, every story and comment you posted, your likes and your " +
+                        "synced data from Kissa's server, right away. It can't be undone. What's on this phone stays.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirm = false; onDeleteAccount() }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Keep it") } },
+        )
+    }
+}
+
+@Composable
+private fun LegalLinks() {
+    val uriHandler = LocalUriHandler.current
+    Row(Modifier.padding(top = 16.dp)) {
+        TextButton(onClick = { uriHandler.openUri(BuildConfig.RELAY_URL + "/terms") }) { Text("Terms") }
+        TextButton(onClick = { uriHandler.openUri(BuildConfig.RELAY_URL + "/privacy") }) { Text("Privacy") }
+    }
 }
 
 @Composable

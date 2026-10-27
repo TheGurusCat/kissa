@@ -8,6 +8,8 @@ account_id = "6646c9a4473bb8fd48897676e1849b3e"
 
 [vars]
 SENDER = "Kissa <signin@wannabeguru.com>"
+# Shown on the terms, privacy and account-deletion pages (src/pages.js).
+CONTACT_EMAIL = "andrebellapro@gmail.com"
 # Google Cloud "Web application" OAuth client ID for "Continue with Google"; empty turns Google sign-in off.
 GOOGLE_CLIENT_ID = "98321916650-qe2ok27ie78hh0cpsmvaip0a1m1dabdd.apps.googleusercontent.com"
 

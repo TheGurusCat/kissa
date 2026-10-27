@@ -7,6 +7,7 @@
 //   POST /auth/signout                  ends this session
 //   GET  /me                            returns {email, profile}
 //   PUT  /me           {username}       picks or changes the username; returns {email, profile}
+//   DELETE /me                          deletes the account and everything it posted, liked or synced
 //   GET  /sync                          returns {data, updatedAt, profile} (data is null before the first upload)
 //   PUT  /sync         {data, updatedAt} replaces the account's data with this snapshot
 //
@@ -16,6 +17,7 @@
 // ../migrations): users, sessions, sign_in_codes, likes and daily_stats. Tokens and codes are only ever stored hashed.
 
 import { verifiedGoogleEmail } from "./google.js";
+import { deleteAccountData } from "./stories.js";
 
 const CODE_TTL_MS = 10 * 60 * 1000;
 const RESEND_WAIT_MS = 60 * 1000;
@@ -38,6 +40,7 @@ export async function handleAccount(request, env, url) {
       case "POST /auth/google": return await googleSignIn(request, env);
       case "GET /me": return await getMe(request, env);
       case "PUT /me": return await setUsername(request, env);
+      case "DELETE /me": return await deleteAccount(request, env);
       case "POST /auth/signout": return await signOut(request, env);
       case "GET /sync": return await getSnapshot(request, env);
       case "PUT /sync": return await putSnapshot(request, env);
@@ -149,6 +152,13 @@ async function setUsername(request, env) {
   const updated = await env.DB.prepare("UPDATE users SET username = ?, username_key = ? WHERE id = ? RETURNING *")
     .bind(username, key, user.id).first();
   return json({ email: updated.email, profile: profile(updated) }, 200);
+}
+
+async function deleteAccount(request, env) {
+  const user = await requireUser(request, env);
+  if (user.is_house) throw new HttpError(400, "House accounts are removed through the admin API.");
+  await deleteAccountData(env, user.id);
+  return json({ ok: true }, 200);
 }
 
 /** What the app needs to know about an account besides its synced data. */

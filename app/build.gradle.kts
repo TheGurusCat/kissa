@@ -78,6 +78,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    // Background check for likes and comments on your stories.
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
+
     // "Continue with Google" through Android's Credential Manager.
     implementation("androidx.credentials:credentials:1.3.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.3.0")

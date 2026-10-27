@@ -75,6 +75,12 @@ class AccountRepository(context: Context) {
             .apply()
     }
 
+    /** Deletes the account and everything it posted or synced on the server, then forgets it here. */
+    suspend fun deleteAccount() {
+        call("DELETE", "/me", null)
+        prefs.edit().clear().apply()
+    }
+
     suspend fun signOut() {
         // Ending the session on the server is a courtesy; the phone forgets it either way.
         runCatching { call("POST", "/auth/signout", null) }
