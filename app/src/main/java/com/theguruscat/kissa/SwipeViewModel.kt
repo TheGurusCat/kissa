@@ -412,6 +412,12 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
             .put("newsFeeds", JSONArray(newsFeeds))
             .put("seen", JSONArray(seen.toList().takeLast(SYNCED_SEEN)))
             .put(
+                "stats",
+                JSONObject().apply {
+                    stats.forEach { (day, s) -> put(day, JSONObject().put("stories", s.stories).put("seconds", s.seconds)) }
+                },
+            )
+            .put(
                 "settings",
                 JSONObject()
                     .put("textScale", reading.textScale.toDouble())
@@ -442,6 +448,11 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
         val remoteSubreddits = data.optJSONArray("subreddits")?.let { a -> List(a.length()) { a.getString(it) } }
         val remoteFeeds = data.optJSONArray("newsFeeds")?.let { a -> List(a.length()) { a.getString(it) } }
         val settings = data.optJSONObject("settings")
+        val remoteStats = data.optJSONObject("stats")?.let { json ->
+            json.keys().asSequence().associateWith { day ->
+                json.getJSONObject(day).let { DayStats(it.optInt("stories"), it.optInt("seconds")) }
+            }
+        }
         _state.update { state ->
             val storyMode = settings?.optString("storyMode")
                 ?.let { name -> ReadMode.STORY_MODES.firstOrNull { it.name == name } }
@@ -453,6 +464,14 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
                     merge -> (state.saved + liked).distinctBy { it.id }
                     else -> liked
                 },
+                // Each phone counts its own reading, so per day the higher count wins.
+                stats = remoteStats?.let { remote ->
+                    (state.stats.keys + remote.keys).associateWith { day ->
+                        val here = state.stats[day] ?: DayStats()
+                        val there = remote[day] ?: DayStats()
+                        DayStats(maxOf(here.stories, there.stories), maxOf(here.seconds, there.seconds))
+                    }
+                } ?: state.stats,
                 subreddits = remoteSubreddits ?: state.subreddits,
                 newsFeeds = remoteFeeds ?: state.newsFeeds,
                 showNsfw = settings?.optBoolean("showNsfw", state.showNsfw) ?: state.showNsfw,

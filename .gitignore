@@ -16,4 +16,5 @@
 
 # Cloudflare Worker local state
 relay/.wrangler/
+relay/node_modules/
 relay/.dev.vars

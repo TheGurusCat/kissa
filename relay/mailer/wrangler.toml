@@ -1,4 +1,4 @@
-name = "calm-read-mailer"
+name = "kissa-mailer"
 main = "src/index.js"
 compatibility_date = "2025-06-01"
 # Andrebellapro's account: Cloudflare only sends from domains in the Worker's own account, and

@@ -1,4 +1,4 @@
-name = "reddit-swipe-relay"
+name = "kissa-relay"
 main = "src/index.js"
 compatibility_date = "2025-06-01"
 # Abella360's account, where the Worker runs and wannabeguru.com sends sign-in email.
@@ -10,11 +10,11 @@ account_id = "3f324c8103f28aee2560dc588bae6df8"
 
 [vars]
 # Sign-in codes are emailed by the mailer Worker (relay/mailer) in the account that owns wannabeguru.com.
-MAILER_URL = "https://calm-read-mailer.abpro.workers.dev"
+MAILER_URL = "https://kissa-mailer.abpro.workers.dev"
 
-# Sign-in codes, sessions and synced snapshots (see src/account.js).
-# Create once with `npx wrangler kv namespace create ACCOUNTS` and put the printed id here.
-[[kv_namespaces]]
-binding = "ACCOUNTS"
-id = "75a3a7a911f94a6d96f2918f6961576b"
-
+# Accounts, liked cards and daily stats (see src/account.js). Schema changes go in migrations/ and are applied
+# with `npx wrangler d1 migrations apply kissa --remote`.
+[[d1_databases]]
+binding = "DB"
+database_name = "kissa"
+database_id = "e4ff9f5c-44af-4ade-8093-6db2ba045c09"

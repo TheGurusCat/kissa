@@ -1,21 +1,23 @@
-// Optional Kissa accounts: sign in with a 6-digit code sent by email, then keep one JSON snapshot
-// (liked cards, sources, settings) per account so it syncs across phones.
+// Optional Kissa accounts: sign in with a 6-digit code sent by email, then sync liked cards, sources,
+// settings and daily reading stats across phones.
 //
 //   POST /auth/code    {email}          emails a code (one per minute per address, valid 10 minutes)
 //   POST /auth/verify  {email, code}    returns {token, email}; 5 wrong tries and the code is void
 //   POST /auth/signout                  ends this session
 //   GET  /sync                          returns {data, updatedAt} (data is null before the first upload)
-//   PUT  /sync         {data, updatedAt} replaces the snapshot
+//   PUT  /sync         {data, updatedAt} replaces the account's data with this snapshot
 //
-// Storage (KV namespace ACCOUNTS): code:<email> and sent:<email> expire on their own; session:<sha256 of token>
-// maps a session to its email; user:<email> holds the snapshot. Tokens and codes are only ever stored hashed.
+// The app still sends and receives one JSON snapshot; here it is split into D1 tables (DB binding, schema in
+// ../migrations): users, sessions, sign_in_codes, likes and daily_stats. Tokens and codes are only ever stored hashed.
 
-const CODE_TTL_SECONDS = 600;
-const RESEND_WAIT_SECONDS = 60;
+const CODE_TTL_MS = 10 * 60 * 1000;
+const RESEND_WAIT_MS = 60 * 1000;
 const MAX_CODE_ATTEMPTS = 5;
-const SESSION_TTL_SECONDS = 365 * 24 * 3600;
+const SESSION_TTL_MS = 365 * 24 * 3600 * 1000;
 const MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024;
+const MAX_LIKES = 5000;
 const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
+const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function handleAccount(request, env, url) {
   const route = `${request.method} ${url.pathname}`;
@@ -44,16 +46,17 @@ class HttpError extends Error {
 
 async function sendCode(request, env) {
   const email = normalizeEmail((await readJson(request)).email);
-  if (await env.ACCOUNTS.get(`sent:${email}`)) {
+  const now = Date.now();
+  const pending = await env.DB.prepare("SELECT sent_at FROM sign_in_codes WHERE email = ?").bind(email).first();
+  if (pending && now - pending.sent_at < RESEND_WAIT_MS) {
     throw new HttpError(429, "A code was just sent. Wait a minute before asking for another.");
   }
   const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0");
-  await env.ACCOUNTS.put(
-    `code:${email}`,
-    JSON.stringify({ hash: await sha256(`${email}:${code}`), attempts: 0 }),
-    { expirationTtl: CODE_TTL_SECONDS },
-  );
-  await env.ACCOUNTS.put(`sent:${email}`, "1", { expirationTtl: RESEND_WAIT_SECONDS });
+  await env.DB.prepare(
+    `INSERT INTO sign_in_codes (email, code_hash, attempts, sent_at, expires_at) VALUES (?, ?, 0, ?, ?)
+     ON CONFLICT(email) DO UPDATE SET code_hash = excluded.code_hash, attempts = 0,
+       sent_at = excluded.sent_at, expires_at = excluded.expires_at`,
+  ).bind(email, await sha256(`${email}:${code}`), now, now + CODE_TTL_MS).run();
   // Sent by the mailer Worker (relay/mailer), which lives in the account that owns the sending domain.
   const mailer = await fetch(env.MAILER_URL, {
     method: "POST",
@@ -68,7 +71,7 @@ async function sendCode(request, env) {
   });
   if (!mailer.ok) {
     console.error("Mailer failed:", mailer.status, await mailer.text());
-    await env.ACCOUNTS.delete(`sent:${email}`);
+    await env.DB.prepare("DELETE FROM sign_in_codes WHERE email = ?").bind(email).run();
     throw new HttpError(502, "Couldn't send the email. Check the address and try again.");
   }
   return json({ ok: true }, 200);
@@ -78,37 +81,73 @@ async function verifyCode(request, env) {
   const body = await readJson(request);
   const email = normalizeEmail(body.email);
   const code = String(body.code ?? "").trim();
-  const stored = await env.ACCOUNTS.get(`code:${email}`, "json");
-  if (!stored) throw new HttpError(400, "That code has expired. Ask for a new one.");
-  if (stored.hash !== (await sha256(`${email}:${code}`))) {
-    stored.attempts += 1;
-    if (stored.attempts >= MAX_CODE_ATTEMPTS) {
-      await env.ACCOUNTS.delete(`code:${email}`);
+  const now = Date.now();
+  const stored = await env.DB.prepare("SELECT code_hash, attempts, expires_at FROM sign_in_codes WHERE email = ?")
+    .bind(email).first();
+  if (!stored || stored.expires_at < now) throw new HttpError(400, "That code has expired. Ask for a new one.");
+  if (stored.code_hash !== (await sha256(`${email}:${code}`))) {
+    if (stored.attempts + 1 >= MAX_CODE_ATTEMPTS) {
+      await env.DB.prepare("DELETE FROM sign_in_codes WHERE email = ?").bind(email).run();
       throw new HttpError(400, "Too many wrong tries. Ask for a new code.");
     }
-    await env.ACCOUNTS.put(`code:${email}`, JSON.stringify(stored), { expirationTtl: CODE_TTL_SECONDS });
+    await env.DB.prepare("UPDATE sign_in_codes SET attempts = attempts + 1 WHERE email = ?").bind(email).run();
     throw new HttpError(400, "That code isn't right.");
   }
-  await env.ACCOUNTS.delete(`code:${email}`);
+  const user = await env.DB.prepare(
+    `INSERT INTO users (email, created_at, last_seen_at) VALUES (?, ?, ?)
+     ON CONFLICT(email) DO UPDATE SET last_seen_at = excluded.last_seen_at RETURNING id`,
+  ).bind(email, now, now).first();
   const token = hex(crypto.getRandomValues(new Uint8Array(32)));
-  await env.ACCOUNTS.put(`session:${await sha256(token)}`, email, { expirationTtl: SESSION_TTL_SECONDS });
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM sign_in_codes WHERE email = ?").bind(email),
+    env.DB.prepare("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
+      .bind(await sha256(token), user.id, now, now + SESSION_TTL_MS),
+    // Expired sessions of anyone are cleared now and then, on sign-in.
+    env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
+  ]);
   return json({ token, email }, 200);
 }
 
 async function signOut(request, env) {
   const token = bearer(request);
-  if (token) await env.ACCOUNTS.delete(`session:${await sha256(token)}`);
+  if (token) await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(await sha256(token)).run();
   return json({ ok: true }, 200);
 }
 
 async function getSnapshot(request, env) {
-  const email = await requireSession(request, env);
-  const stored = await env.ACCOUNTS.get(`user:${email}`, "json");
-  return json(stored ?? { data: null, updatedAt: 0 }, 200);
+  const userId = await requireSession(request, env);
+  const user = await env.DB.prepare("SELECT synced_at, subreddits, news_feeds, settings, seen FROM users WHERE id = ?")
+    .bind(userId).first();
+  if (!user.synced_at) return json({ data: null, updatedAt: 0 }, 200);
+  const [likes, stats] = await env.DB.batch([
+    env.DB.prepare("SELECT * FROM likes WHERE user_id = ? ORDER BY position").bind(userId),
+    env.DB.prepare("SELECT day, stories, seconds FROM daily_stats WHERE user_id = ?").bind(userId),
+  ]);
+  const data = {
+    liked: likes.results.map((row) => ({
+      id: row.post_id,
+      subreddit: row.subreddit,
+      title: row.title,
+      body: row.body,
+      author: row.author,
+      score: row.score,
+      numComments: row.num_comments,
+      permalink: row.permalink,
+      isNsfw: !!row.is_nsfw,
+      isNews: !!row.is_news,
+      publishedAt: row.published_at,
+    })),
+    stats: Object.fromEntries(stats.results.map((row) => [row.day, { stories: row.stories, seconds: row.seconds }])),
+  };
+  // Parts this account never uploaded stay out, so the phone keeps its own.
+  for (const [key, column] of [["subreddits", "subreddits"], ["newsFeeds", "news_feeds"], ["settings", "settings"], ["seen", "seen"]]) {
+    if (user[column] != null) data[key] = JSON.parse(user[column]);
+  }
+  return json({ data, updatedAt: user.synced_at }, 200);
 }
 
 async function putSnapshot(request, env) {
-  const email = await requireSession(request, env);
+  const userId = await requireSession(request, env);
   const text = await request.text();
   if (text.length > MAX_SNAPSHOT_BYTES) throw new HttpError(413, "Too much to sync.");
   let body;
@@ -117,16 +156,87 @@ async function putSnapshot(request, env) {
   } catch {
     throw new HttpError(400, "Expected JSON.");
   }
-  if (typeof body.data !== "object" || typeof body.updatedAt !== "number") throw new HttpError(400, "Expected {data, updatedAt}.");
-  await env.ACCOUNTS.put(`user:${email}`, JSON.stringify({ data: body.data, updatedAt: body.updatedAt }));
+  const data = body.data;
+  if (typeof data !== "object" || data === null || typeof body.updatedAt !== "number") {
+    throw new HttpError(400, "Expected {data, updatedAt}.");
+  }
+  await env.DB.batch(snapshotStatements(env.DB, userId, data, body.updatedAt, Date.now()));
   return json({ ok: true, updatedAt: body.updatedAt }, 200);
+}
+
+/** The statements that make the account's rows match one uploaded snapshot. */
+function snapshotStatements(db, userId, data, updatedAt, now) {
+  const liked = Array.isArray(data.liked) ? data.liked.filter(isPost).slice(0, MAX_LIKES) : null;
+  const statements = [
+    db.prepare(
+      // A part missing from the snapshot keeps what was stored.
+      `UPDATE users SET synced_at = ?, last_seen_at = ?, subreddits = COALESCE(?, subreddits),
+         news_feeds = COALESCE(?, news_feeds), settings = COALESCE(?, settings), seen = COALESCE(?, seen)
+       WHERE id = ?`,
+    ).bind(
+      updatedAt,
+      now,
+      jsonOrNull(data.subreddits, Array.isArray),
+      jsonOrNull(data.newsFeeds, Array.isArray),
+      jsonOrNull(data.settings, (v) => typeof v === "object" && v !== null && !Array.isArray(v)),
+      jsonOrNull(data.seen, Array.isArray),
+      userId,
+    ),
+  ];
+  if (liked) {
+    // Unliked cards go; the rest keep the time they were first liked.
+    statements.push(
+      db.prepare("DELETE FROM likes WHERE user_id = ? AND post_id NOT IN (SELECT value FROM json_each(?))")
+        .bind(userId, JSON.stringify(liked.map((post) => post.id))),
+    );
+    liked.forEach((post, position) => statements.push(
+      db.prepare(
+        `INSERT INTO likes (user_id, post_id, position, liked_at, subreddit, title, body, author, score, num_comments,
+           permalink, is_nsfw, is_news, published_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, post_id) DO UPDATE SET position = excluded.position, title = excluded.title,
+           body = excluded.body, score = excluded.score, num_comments = excluded.num_comments`,
+      ).bind(
+        userId, post.id, position, now, post.subreddit, post.title, String(post.body ?? ""), String(post.author ?? ""),
+        int(post.score), int(post.numComments), post.permalink, post.isNsfw ? 1 : 0, post.isNews ? 1 : 0,
+        int(post.publishedAt),
+      ),
+    ));
+  }
+  if (typeof data.stats === "object" && data.stats !== null) {
+    for (const [day, entry] of Object.entries(data.stats)) {
+      if (!DAY_PATTERN.test(day) || typeof entry !== "object" || entry === null) continue;
+      statements.push(
+        db.prepare(
+          `INSERT INTO daily_stats (user_id, day, stories, seconds) VALUES (?, ?, ?, ?)
+           ON CONFLICT(user_id, day) DO UPDATE SET stories = excluded.stories, seconds = excluded.seconds`,
+        ).bind(userId, day, Math.max(0, int(entry.stories)), Math.max(0, int(entry.seconds))),
+      );
+    }
+  }
+  return statements;
+}
+
+function isPost(post) {
+  return typeof post === "object" && post !== null &&
+    ["id", "subreddit", "title", "permalink"].every((key) => typeof post[key] === "string");
+}
+
+function jsonOrNull(value, valid) {
+  return valid(value) ? JSON.stringify(value) : null;
+}
+
+function int(value) {
+  const number = Math.trunc(Number(value));
+  return Number.isFinite(number) ? number : 0;
 }
 
 async function requireSession(request, env) {
   const token = bearer(request);
-  const email = token && (await env.ACCOUNTS.get(`session:${await sha256(token)}`));
-  if (!email) throw new HttpError(401, "Signed out. Sign in again.");
-  return email;
+  const session = token && await env.DB.prepare("SELECT user_id, expires_at FROM sessions WHERE token_hash = ?")
+    .bind(await sha256(token)).first();
+  if (!session || session.expires_at < Date.now()) throw new HttpError(401, "Signed out. Sign in again.");
+  return session.user_id;
 }
 
 function bearer(request) {

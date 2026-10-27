@@ -5,7 +5,7 @@
 
 import { handleAccount, json } from "./account.js";
 
-const USER_AGENT = "cloudflare-worker:reddit-swipe-relay:v1 (by /u/titsonaplane)";
+const USER_AGENT = "cloudflare-worker:kissa-relay:v1 (by /u/titsonaplane)";
 const LISTING_PATH = /^\/r\/([A-Za-z0-9_]{2,21})\/(hot|new|top|rising)$/;
 const ALLOWED_PARAMS = ["limit", "after", "t"];
 const CACHE_SECONDS = 120;
