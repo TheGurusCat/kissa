@@ -98,6 +98,13 @@ Limits per account per day: 10 stories, 200 comments, 50 reports. Make someone a
 ```bash
 cd relay && npx wrangler d1 execute kissa --remote --command "UPDATE users SET is_admin = 1 WHERE email = 'you@example.com'"
 ```
+Writers hear about likes and comments on their stories: the relay keeps `notifications`, the app shows them on a
+**Notifications** screen, and about hourly in the background (WorkManager, `notify/ActivityNotifier.kt`) as Android
+notifications. Readers can block an account (from its profile or a comment's menu), which hides its stories and comments
+from them. **Account → Delete account** removes the account and everything it posted or synced (`DELETE /me`).
+Public pages for the app stores: `/terms`, `/privacy`, `/delete-account` (`relay/src/pages.js`; contact address in
+`CONTACT_EMAIL` in `relay/wrangler.toml`). Story pages carry link-preview tags and a "Read more stories on Kissa" link.
+
 ### Admin API (house accounts)
 Kissa's own scripts can create **house accounts** and post stories and comments as them (`relay/src/api.js`). Readers
 see a **KISSA** badge next to those names. House accounts can't sign in, and the API can't post as a reader's account.
