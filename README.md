@@ -1,7 +1,8 @@
 # Kissa
 
 An Android app for swiping through news and Reddit stories Tinder-style — **text only, no images or video**.
-(Formerly "Calm Read", and before that "Reddit Swipe". Kissa restarts at v0.1 with a new package name, so it installs as a new app beside the old one.)
+
+Website: https://kissa.abpro.workers.dev (source in `site/`; deploy with `cd site && npx wrangler deploy`).
 
 ## Why
 A calmer replacement for Instagram and other image-heavy social apps: something to do with your thumb that doesn't pull you into an endless visual feed.

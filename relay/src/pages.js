@@ -4,7 +4,8 @@
 //   GET /terms, /privacy, /delete-account
 
 const UPDATED = "October 27, 2026";
-export const DOWNLOAD_URL = "https://github.com/TheGurusCat/kissa/releases/latest";
+// Kissa's website (site/), where readers of a shared story can get the app.
+export const DOWNLOAD_URL = "https://kissa.abpro.workers.dev";
 
 export function handlePages(request, env, url) {
   if (request.method !== "GET") return null;

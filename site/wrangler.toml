@@ -1,0 +1,14 @@
+name = "kissa"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+# Andrebellapro's account, next to kissa-relay. Served at https://kissa.abpro.workers.dev
+account_id = "6646c9a4473bb8fd48897676e1849b3e"
+
+# The relay, called directly (workers.dev Workers can't fetch each other by URL): the latest stories on the home page.
+[[services]]
+binding = "RELAY"
+service = "kissa-relay"
+
+[vars]
+RELAY_URL = "https://kissa-relay.abpro.workers.dev"
+GITHUB_REPO = "TheGurusCat/kissa"

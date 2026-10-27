@@ -18,3 +18,5 @@
 relay/.wrangler/
 relay/node_modules/
 relay/.dev.vars
+site/.wrangler/
+site/node_modules/
