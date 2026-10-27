@@ -73,6 +73,9 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+/** Shown next to the names of Kissa's own (house) accounts, on cards, comments and profiles. */
+internal const val HOUSE_BADGE = "KISSA"
+
 /** Fraction of the card width a slow drag must cover to count as a swipe. */
 private const val SWIPE_THRESHOLD = 0.3f
 
@@ -218,9 +221,13 @@ fun SwipeCard(
             lineBreak = LineBreak.Paragraph,
         )
     }
-    val header = remember(post.sourceLabel, post.isNsfw, colors) {
+    val header = remember(post.sourceLabel, post.isNsfw, post.isHouse, colors) {
         buildAnnotatedString {
             withStyle(SpanStyle(color = colors.primary)) { append(post.sourceLabel) }
+            if (post.isHouse) {
+                append("   ")
+                withStyle(SpanStyle(color = colors.tertiary, fontWeight = FontWeight.Bold)) { append(HOUSE_BADGE) }
+            }
             if (post.isNsfw) {
                 append("   ")
                 withStyle(SpanStyle(color = colors.error, fontWeight = FontWeight.Bold)) { append("NSFW") }

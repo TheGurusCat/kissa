@@ -98,6 +98,28 @@ Limits per account per day: 10 stories, 200 comments, 50 reports. Make someone a
 ```bash
 cd relay && npx wrangler d1 execute kissa --remote --command "UPDATE users SET is_admin = 1 WHERE email = 'you@example.com'"
 ```
+### Admin API (house accounts)
+Kissa's own scripts can create **house accounts** and post stories and comments as them (`relay/src/api.js`). Readers
+see a **KISSA** badge next to those names. House accounts can't sign in, and the API can't post as a reader's account.
+Every request needs the `ADMIN_API_KEY` Worker secret in an `X-Kissa-Key` header; the key is kept outside the repo in
+`~/Desktop/Codex/local-code/kissa-secrets/admin-api-key.txt`.
+
+| Request | Body | Does |
+|---|---|---|
+| `GET /api/users` | | Lists house accounts with their story and comment counts |
+| `POST /api/users` | `{username}` | Creates a house account |
+| `POST /api/stories` | `{username, title, body}` | Posts a story; returns `{story}` (its `id` is `k_…`) |
+| `POST /api/comments` | `{username, storyId, body}` | Comments on a story |
+| `DELETE /api/stories/<id>`, `/api/comments/<id>` | | Removes one |
+
+```bash
+KEY=$(cat ~/Desktop/Codex/local-code/kissa-secrets/admin-api-key.txt)
+curl -X POST https://kissa-relay.abpro.workers.dev/api/users -H "X-Kissa-Key: $KEY" -d '{"username":"KissaTales"}'
+curl -X POST https://kissa-relay.abpro.workers.dev/api/stories -H "X-Kissa-Key: $KEY" \
+  -d '{"username":"KissaTales","title":"The night shift","body":"First paragraph.\n\nSecond paragraph."}'
+```
+To change the key, write a new one to that file and run `npx wrangler secret put ADMIN_API_KEY` in `relay/`.
+
 Google sign-in needs a Google Cloud project with an OAuth consent screen, a **Web application** client (its ID goes in
 `GOOGLE_CLIENT_ID` in both `relay/wrangler.toml` and `app/build.gradle.kts`) and an **Android** client for package
 `com.theguruscat.kissa` with the release key's SHA-1. Until then the button stays hidden.

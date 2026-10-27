@@ -88,7 +88,7 @@ fun CommentsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (post.author.isNotEmpty()) {
                             Text(
-                                "u/${post.author}",
+                                "u/${post.author}" + if (post.isHouse) "  $HOUSE_BADGE" else "",
                                 color = MaterialTheme.colorScheme.primary,
                                 style = MaterialTheme.typography.labelLarge,
                                 modifier = Modifier.clickable { onOpenProfile(post.author) }.padding(vertical = 6.dp),
@@ -134,7 +134,8 @@ fun CommentsScreen(
                 Row(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp)) {
                     Column(Modifier.weight(1f)) {
                         Text(
-                            "u/${comment.author}  ·  " + DateUtils.getRelativeTimeSpanString(
+                            "u/${comment.author}" + (if (comment.isHouse) "  $HOUSE_BADGE" else "") + "  ·  " +
+                                DateUtils.getRelativeTimeSpanString(
                                 comment.createdAt,
                                 System.currentTimeMillis(),
                                 DateUtils.MINUTE_IN_MILLIS,

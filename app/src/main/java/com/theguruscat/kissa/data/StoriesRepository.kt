@@ -3,9 +3,10 @@ package com.theguruscat.kissa.data
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class Comment(val id: String, val author: String, val body: String, val createdAt: Long)
+/** [isHouse]: written by one of Kissa's own accounts, which readers see with a badge. */
+data class Comment(val id: String, val author: String, val body: String, val createdAt: Long, val isHouse: Boolean = false)
 
-data class UserProfile(val username: String, val joinedAt: Long, val stories: List<RedditPost>)
+data class UserProfile(val username: String, val joinedAt: Long, val stories: List<RedditPost>, val isHouse: Boolean = false)
 
 /** An open report, as the Moderation screen shows it. [targetId] is a story or comment ID without "k_". */
 data class Report(
@@ -66,7 +67,12 @@ class StoriesRepository(private val account: AccountRepository) {
 
     suspend fun profile(username: String): UserProfile {
         val json = account.call("GET", "/u/$username", null)
-        return UserProfile(json.getString("username"), json.optLong("joinedAt"), posts(json.getJSONArray("stories")))
+        return UserProfile(
+            json.getString("username"),
+            json.optLong("joinedAt"),
+            posts(json.getJSONArray("stories")),
+            json.optBoolean("isHouse"),
+        )
     }
 
     /** Reports a story (a card ID) or a comment to the admins. */
@@ -106,7 +112,7 @@ class StoriesRepository(private val account: AccountRepository) {
     private fun posts(array: JSONArray) = List(array.length()) { RedditPost.fromJson(array.getJSONObject(it)) }
 
     private fun comment(json: JSONObject) =
-        Comment(json.getString("id"), json.optString("author"), json.getString("body"), json.optLong("createdAt"))
+        Comment(json.getString("id"), json.optString("author"), json.getString("body"), json.optLong("createdAt"), json.optBoolean("isHouse"))
 
     private fun bare(id: String) = id.removePrefix("k_")
 }

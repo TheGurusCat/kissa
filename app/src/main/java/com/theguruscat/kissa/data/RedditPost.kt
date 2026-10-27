@@ -22,6 +22,8 @@ data class RedditPost(
     val publishedAt: Long = 0L,
     /** Written for Kissa and posted through the relay (the Stories tab), not from Reddit or a news site. */
     val isOriginal: Boolean = false,
+    /** A Kissa story posted by one of Kissa's own (house) accounts rather than a reader; shown with a badge. */
+    val isHouse: Boolean = false,
 ) {
     val url: String get() = if (isNews || isOriginal) permalink else "https://www.reddit.com$permalink"
 
@@ -74,6 +76,7 @@ data class RedditPost(
         .put("isNews", isNews)
         .put("publishedAt", publishedAt)
         .put("isOriginal", isOriginal)
+        .put("isHouse", isHouse)
 
     companion object {
         private val WHITESPACE = Regex("\\s+")
@@ -91,6 +94,7 @@ data class RedditPost(
             isNews = json.optBoolean("isNews"),
             publishedAt = json.optLong("publishedAt"),
             isOriginal = json.optBoolean("isOriginal"),
+            isHouse = json.optBoolean("isHouse"),
         )
     }
 }

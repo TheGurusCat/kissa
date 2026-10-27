@@ -25,8 +25,8 @@ const MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024;
 const MAX_LIKES = 5000;
 const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
-const RESERVED_USERNAMES = new Set(["admin", "administrator", "kissa", "mod", "moderator", "support", "deleted", "system"]);
+export const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
+export const RESERVED_USERNAMES = new Set(["admin", "administrator", "kissa", "mod", "moderator", "support", "deleted", "system"]);
 
 
 export async function handleAccount(request, env, url) {
@@ -307,6 +307,8 @@ function bearer(request) {
 function normalizeEmail(value) {
   const email = String(value ?? "").trim().toLowerCase();
   if (!EMAIL_PATTERN.test(email)) throw new HttpError(400, "That doesn't look like an email address.");
+  // House accounts (api.js) have placeholder addresses there; nobody signs in as them.
+  if (email.endsWith("@kissa.invalid")) throw new HttpError(400, "That doesn't look like an email address.");
   return email;
 }
 

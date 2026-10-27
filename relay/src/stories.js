@@ -17,13 +17,14 @@
 //   POST   /admin/users/<username>/ban {banned} admins: bans or unbans an account
 //
 // Cards use the app's post shape (see RedditPost.kt) with isOriginal set: IDs are "k_" + the story ID, author
-// is the username, score the upvotes and numComments the comments.
+// is the username (isHouse marks Kissa's own accounts), score the upvotes and numComments the comments.
+// Kissa's scripts create house accounts and post as them through the admin API in api.js.
 
 import { HttpError, currentUser, json, readJson, requireUser } from "./account.js";
 
 const MAX_TITLE = 300;
 const MAX_BODY = 40_000;
-const MAX_COMMENT = 5_000;
+export const MAX_COMMENT = 5_000;
 const MAX_REASON = 500;
 const PAGE_SIZE = 50;
 const DAY_MS = 24 * 3600 * 1000;
@@ -51,8 +52,9 @@ const ROUTES = [
   ["POST", /^\/admin\/users\/([A-Za-z0-9_]{3,20})\/ban$/, banUser],
 ];
 
-// What a card needs besides the story row: the author's username, upvotes and comments.
-const CARD_SELECT = `SELECT s.id, s.title, s.body, s.published_at, u.username AS author,
+// What a card needs besides the story row: the author's username (and whether it's a house account), upvotes
+// and comments.
+export const CARD_SELECT = `SELECT s.id, s.title, s.body, s.published_at, u.username AS author, u.is_house AS author_is_house,
     (SELECT count(*) FROM votes v WHERE v.story_id = s.id) AS score,
     (SELECT count(*) FROM comments c WHERE c.story_id = s.id) AS comments
   FROM stories s JOIN users u ON u.id = s.author_id`;
@@ -104,18 +106,31 @@ async function deleteStory({ request, env }, id) {
   const user = await requireUser(request, env);
   const story = await env.DB.prepare("SELECT author_id FROM stories WHERE id = ?").bind(id).first();
   if (story && (story.author_id === user.id || user.is_admin)) {
-    // Comments and votes go with it (ON DELETE CASCADE isn't enforced in D1 by default).
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM votes WHERE story_id = ?").bind(id),
-      env.DB.prepare("UPDATE reports SET resolved_at = ? WHERE resolved_at IS NULL AND ((kind = 'story' AND target_id = ?) OR (kind = 'comment' AND target_id IN (SELECT id FROM comments WHERE story_id = ?)))")
-        .bind(Date.now(), id, id),
-      env.DB.prepare("DELETE FROM comments WHERE story_id = ?").bind(id),
-      env.DB.prepare("DELETE FROM stories WHERE id = ?").bind(id),
-    ]);
+    await removeStory(env, id);
   } else if (story) {
     throw new HttpError(403, "You can only delete your own stories.");
   }
   return json({ ok: true }, 200);
+}
+
+/** Deletes a story with its votes and comments, and closes reports about any of them. */
+export async function removeStory(env, id) {
+  // ON DELETE CASCADE isn't enforced in D1 by default, so the children go explicitly.
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM votes WHERE story_id = ?").bind(id),
+    env.DB.prepare("UPDATE reports SET resolved_at = ? WHERE resolved_at IS NULL AND ((kind = 'story' AND target_id = ?) OR (kind = 'comment' AND target_id IN (SELECT id FROM comments WHERE story_id = ?)))")
+      .bind(Date.now(), id, id),
+    env.DB.prepare("DELETE FROM comments WHERE story_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM stories WHERE id = ?").bind(id),
+  ]);
+}
+
+/** Deletes a comment and closes reports about it. */
+export async function removeComment(env, id) {
+  await env.DB.batch([
+    env.DB.prepare("UPDATE reports SET resolved_at = ? WHERE kind = 'comment' AND target_id = ? AND resolved_at IS NULL").bind(Date.now(), id),
+    env.DB.prepare("DELETE FROM comments WHERE id = ?").bind(id),
+  ]);
 }
 
 async function vote({ request, env }, id, up) {
@@ -142,7 +157,7 @@ async function storyCard(env, id, origin) {
   return card(await env.DB.prepare(`${CARD_SELECT} WHERE s.id = ?`).bind(id).first(), origin);
 }
 
-function validStory(input) {
+export function validStory(input) {
   const title = String(input.title ?? "").trim();
   const body = String(input.body ?? "").trim();
   if (!title) throw new HttpError(400, "Give the story a title.");
@@ -156,7 +171,8 @@ function validStory(input) {
 
 async function listComments({ env }, storyId) {
   const { results } = await env.DB.prepare(
-    `SELECT c.id, c.body, c.created_at, u.username AS author FROM comments c JOIN users u ON u.id = c.author_id
+    `SELECT c.id, c.body, c.created_at, u.username AS author, u.is_house AS author_is_house
+     FROM comments c JOIN users u ON u.id = c.author_id
      WHERE c.story_id = ? ORDER BY c.created_at`,
   ).bind(storyId).all();
   return json({ comments: results.map(comment) }, 200);
@@ -179,29 +195,31 @@ async function deleteComment({ request, env }, id) {
   const user = await requireUser(request, env);
   const row = await env.DB.prepare("SELECT author_id FROM comments WHERE id = ?").bind(id).first();
   if (row && (row.author_id === user.id || user.is_admin)) {
-    await env.DB.batch([
-      env.DB.prepare("UPDATE reports SET resolved_at = ? WHERE kind = 'comment' AND target_id = ? AND resolved_at IS NULL").bind(Date.now(), id),
-      env.DB.prepare("DELETE FROM comments WHERE id = ?").bind(id),
-    ]);
+    await removeComment(env, id);
   } else if (row) {
     throw new HttpError(403, "You can only delete your own comments.");
   }
   return json({ ok: true }, 200);
 }
 
-function comment(row) {
-  return { id: row.id, author: row.author, body: row.body, createdAt: row.created_at };
+export function comment(row) {
+  return { id: row.id, author: row.author, isHouse: !!row.author_is_house, body: row.body, createdAt: row.created_at };
 }
 
 // --- Profiles ---
 
 async function userProfile({ env, url }, username) {
-  const user = await env.DB.prepare("SELECT id, username, created_at FROM users WHERE username_key = ?")
+  const user = await env.DB.prepare("SELECT id, username, created_at, is_house FROM users WHERE username_key = ?")
     .bind(username.toLowerCase()).first();
   if (!user) throw new HttpError(404, "There's no one called u/" + username + ".");
   const { results } = await env.DB.prepare(`${CARD_SELECT} WHERE s.author_id = ? ORDER BY s.published_at DESC LIMIT 200`)
     .bind(user.id).all();
-  return json({ username: user.username, joinedAt: user.created_at, stories: results.map((row) => card(row, url.origin)) }, 200);
+  return json({
+    username: user.username,
+    isHouse: !!user.is_house,
+    joinedAt: user.created_at,
+    stories: results.map((row) => card(row, url.origin)),
+  }, 200);
 }
 
 // --- Reports and moderation ---
@@ -290,13 +308,14 @@ async function underDailyLimit(env, table, userColumn, timeColumn, userId, limit
   if (n >= limit) throw new HttpError(429, `That's the limit of ${limit} ${noun} a day. Try again tomorrow.`);
 }
 
-function card(row, origin) {
+export function card(row, origin) {
   return {
     id: `k_${row.id}`,
     subreddit: "Kissa",
     title: row.title,
     body: row.body,
     author: row.author ?? "",
+    isHouse: !!row.author_is_house,
     score: row.score ?? 0,
     numComments: row.comments ?? 0,
     permalink: `${origin}/s/${row.id}`,
@@ -307,7 +326,7 @@ function card(row, origin) {
   };
 }
 
-function newId() {
+export function newId() {
   const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
   return [...crypto.getRandomValues(new Uint8Array(10))].map((b) => alphabet[b % alphabet.length]).join("");
 }

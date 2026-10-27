@@ -50,6 +50,13 @@ fun ProfileScreen(
         item {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("u/${loaded?.username ?: username}", style = MaterialTheme.typography.headlineSmall)
+                if (loaded?.isHouse == true) {
+                    Text(
+                        "$HOUSE_BADGE · one of Kissa's own accounts",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
                 if (loaded != null) {
                     val stories = loaded.stories.size
                     val score = loaded.stories.sumOf { it.score }

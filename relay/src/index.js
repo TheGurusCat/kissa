@@ -1,10 +1,11 @@
 // Relay between the Kissa app and Reddit's official API.
 // Holds the Reddit app secret so it never ships inside the public APK.
 // Only subreddit listings can be requested: GET /r/<sub>/<hot|new|top|rising>?limit=&after=&t=
-// It also serves the optional accounts (sign-in codes and sync), in account.js, and Kissa's own stories, in stories.js.
+// It also serves the optional accounts (sign-in codes and sync), in account.js, Kissa's own stories, in stories.js, and the admin API for Kissa's scripts, in api.js.
 
 import { handleAccount, json } from "./account.js";
 import { handleStories } from "./stories.js";
+import { handleApi } from "./api.js";
 
 const USER_AGENT = "cloudflare-worker:kissa-relay:v1 (by /u/titsonaplane)";
 const LISTING_PATH = /^\/r\/([A-Za-z0-9_]{2,21})\/(hot|new|top|rising)$/;
@@ -39,6 +40,8 @@ export default {
     const url = new URL(request.url);
     const account = await handleAccount(request, env, url);
     if (account) return account;
+    const api = await handleApi(request, env, url);
+    if (api) return api;
     const stories = await handleStories(request, env, url);
     if (stories) return stories;
 
