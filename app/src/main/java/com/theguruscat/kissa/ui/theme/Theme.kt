@@ -1,9 +1,11 @@
 package com.theguruscat.kissa.ui.theme
 
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 
 // The app sits on dark gray in light and dark mode alike; the cards are beige paper on top of it.
@@ -40,5 +42,8 @@ fun KissaTheme(content: @Composable () -> Unit) {
 /** The beige colors cards are drawn in; wraps the swipe screen's card stack. */
 @Composable
 fun KissaCardTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = CardColors, typography = MaterialTheme.typography, content = content)
+    MaterialTheme(colorScheme = CardColors, typography = MaterialTheme.typography) {
+        // Text with no color of its own takes the content color, which the screen around set to near-white.
+        CompositionLocalProvider(LocalContentColor provides CardColors.onSurface, content = content)
+    }
 }
