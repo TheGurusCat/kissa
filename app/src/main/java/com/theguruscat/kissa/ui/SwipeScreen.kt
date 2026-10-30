@@ -52,6 +52,7 @@ import com.theguruscat.kissa.ReadMode
 import com.theguruscat.kissa.ReadingSettings
 import com.theguruscat.kissa.SwipeUiState
 import com.theguruscat.kissa.data.RedditPost
+import com.theguruscat.kissa.ui.theme.KissaCardTheme
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -159,57 +160,60 @@ fun SwipeScreen(
             Modifier.weight(1f).fillMaxWidth().onSizeChanged { slotSize = it },
             contentAlignment = Alignment.Center,
         ) {
-            val cardModifier = Modifier.widthIn(max = MaxCardWidth).fillMaxSize()
+            // The cards are beige with dark text, on the dark gray screen.
+            KissaCardTheme {
+                val cardModifier = Modifier.widthIn(max = MaxCardWidth).fillMaxSize()
 
-            // Under the last card sits a loading placeholder or the end-of-feed card, so the final swipe
-            // reveals what comes next rather than a blank screen.
-            if (next == null) {
-                FeedEndCard(state, onRetry, onOpenSubreddits, onOpenNews, cardModifier)
-            }
-
-            // Back card and top card from one keyed loop: when the back card moves up it keeps its
-            // composition and laid-out text instead of being rebuilt.
-            listOfNotNull(next, top).forEach { post ->
-                key(post.id) {
-                    val isTop = post.id == top?.id
-                    if (isTop) {
-                        LaunchedEffect(swipeState) {
-                            swipeState.scale.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow))
-                        }
-                    }
-                    // A single call site for both roles, so the card isn't rebuilt when it moves up.
-                    SwipeCard(
-                        post = post,
-                        reading = state.reading,
-                        decision = if (isTop) ({ swipeState.progress }) else null,
-                        modifier = if (!isTop) cardModifier else cardModifier
-                            .horizontalSwipe(swipeState, view) { right, v ->
-                                commit(post, if (right) Exit.Right else Exit.Left, v)
-                            }
-                            .semantics {
-                                customActions = listOf(
-                                    CustomAccessibilityAction("Like") { commit(post, Exit.Right, 0f); true },
-                                    CustomAccessibilityAction("Skip") { commit(post, Exit.Left, 0f); true },
-                                )
-                            },
-                        transform = if (isTop) topTransform else backTransform,
-                        onTextScale = if (isTop) onTextScale else null,
-                        onOpen = when {
-                            !isTop -> null
-                            post.isNews -> ({ uriHandler.openUri(post.url) })
-                            post.isOriginal -> ({ onOpenComments(post) })
-                            else -> null
-                        },
-                        openLabel = if (post.isOriginal) "Hold for comments" else "Hold for full article ↗",
-                        onSource = if (isTop && post.isOriginal && post.author.isNotEmpty()) ({ onOpenProfile(post.author) }) else null,
-                    )
+                // Under the last card sits a loading placeholder or the end-of-feed card, so the final swipe
+                // reveals what comes next rather than a blank screen.
+                if (next == null) {
+                    FeedEndCard(state, onRetry, onOpenSubreddits, onOpenNews, cardModifier)
                 }
-            }
 
-            leaving.forEach { card ->
-                key("leaving-${card.id}") {
-                    LeavingCardView(card, state.reading, cardModifier, cardWidthPx) {
-                        leaving -= card
+                // Back card and top card from one keyed loop: when the back card moves up it keeps its
+                // composition and laid-out text instead of being rebuilt.
+                listOfNotNull(next, top).forEach { post ->
+                    key(post.id) {
+                        val isTop = post.id == top?.id
+                        if (isTop) {
+                            LaunchedEffect(swipeState) {
+                                swipeState.scale.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow))
+                            }
+                        }
+                        // A single call site for both roles, so the card isn't rebuilt when it moves up.
+                        SwipeCard(
+                            post = post,
+                            reading = state.reading,
+                            decision = if (isTop) ({ swipeState.progress }) else null,
+                            modifier = if (!isTop) cardModifier else cardModifier
+                                .horizontalSwipe(swipeState, view) { right, v ->
+                                    commit(post, if (right) Exit.Right else Exit.Left, v)
+                                }
+                                .semantics {
+                                    customActions = listOf(
+                                        CustomAccessibilityAction("Like") { commit(post, Exit.Right, 0f); true },
+                                        CustomAccessibilityAction("Skip") { commit(post, Exit.Left, 0f); true },
+                                    )
+                                },
+                            transform = if (isTop) topTransform else backTransform,
+                            onTextScale = if (isTop) onTextScale else null,
+                            onOpen = when {
+                                !isTop -> null
+                                post.isNews -> ({ uriHandler.openUri(post.url) })
+                                post.isOriginal -> ({ onOpenComments(post) })
+                                else -> null
+                            },
+                            openLabel = if (post.isOriginal) "Hold for comments" else "Hold for full article ↗",
+                            onSource = if (isTop && post.isOriginal && post.author.isNotEmpty()) ({ onOpenProfile(post.author) }) else null,
+                        )
+                    }
+                }
+
+                leaving.forEach { card ->
+                    key("leaving-${card.id}") {
+                        LeavingCardView(card, state.reading, cardModifier, cardWidthPx) {
+                            leaving -= card
+                        }
                     }
                 }
             }

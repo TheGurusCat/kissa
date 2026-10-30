@@ -1,0 +1,15 @@
+{
+  "name": "kissa-studio",
+  "private": true,
+  "type": "module",
+  "description": "Runs on your Mac: Kissa's house writers, their stories, and Claude drafting new ones.",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0"
+  }
+}

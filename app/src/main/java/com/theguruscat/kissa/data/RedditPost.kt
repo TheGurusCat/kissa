@@ -1,6 +1,7 @@
 package com.theguruscat.kissa.data
 
 import org.json.JSONObject
+import java.security.MessageDigest
 
 /**
  * One card: a Reddit text post, a news article when [isNews] is set, or one of Kissa's own stories when
@@ -50,8 +51,21 @@ data class RedditPost(
         text.lowercase().filter { it.isLetterOrDigit() }.takeIf { it.length >= 15 }?.let { "t:$it" }
     }
 
-    /** Everything that marks this card as already read: its ID and, when there is one, its [titleKey]. */
-    val seenKeys: List<String> get() = listOfNotNull(id, titleKey)
+    /**
+     * Identifies the same Reddit story posted again under another title, often to several subreddits at
+     * once ("AITA for…" in r/AmItheAsshole, "AITAH for…" in r/AITAH): a hash of the start of the body, so
+     * edits added at the end don't change it. Null for news, Kissa stories and posts too short to tell apart.
+     */
+    val bodyKey: String? by lazy {
+        if (!isReddit) return@lazy null
+        val text = body.lowercase().filter { it.isLetterOrDigit() }
+        if (text.length < BODY_KEY_CHARS) return@lazy null
+        val digest = MessageDigest.getInstance("SHA-1").digest(text.take(BODY_KEY_CHARS).encodeToByteArray())
+        "b:" + digest.take(8).joinToString("") { "%02x".format(it) }
+    }
+
+    /** Everything that marks this card as already read: its ID and, when there are ones, its [titleKey] and [bodyKey]. */
+    val seenKeys: List<String> get() = listOfNotNull(id, titleKey, bodyKey)
 
     /** A news article published more than [NEWS_MAX_AGE_MS] ago; articles without a date never go stale. */
     fun isStaleNews(now: Long = System.currentTimeMillis()) =
@@ -98,3 +112,6 @@ data class RedditPost(
         )
     }
 }
+
+// Letters and digits from the start of a body that [RedditPost.bodyKey] hashes; about 40 words.
+private const val BODY_KEY_CHARS = 200

@@ -37,6 +37,9 @@ A calmer replacement for Instagram and other image-heavy social apps: something 
 - Reddit's official API, reached through a small Cloudflare Worker relay (`relay/`) that keeps the Reddit app secret off the phone
 - Local storage: JSON files in the app's private folder plus SharedPreferences for settings (`data/LocalStore.kt`)
 
+## Kissa Studio
+House writers' stories are drafted with Claude and posted from a small page on your Mac: `studio/` (see `studio/README.md`).
+
 ## Building on GitHub
 - Every push to `main` builds a debug APK (Actions → Build → artifact `Kissa-debug`).
 - **Releasing a new version:** bump nothing in code, just tag and push:
