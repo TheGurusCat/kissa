@@ -75,6 +75,8 @@ val NEWS_FEEDS = listOf(
     NewsFeed("The Verge", "https://www.theverge.com/rss/index.xml", NewsCategory.Tech),
     NewsFeed("Wired", "https://www.wired.com/feed/rss", NewsCategory.Tech),
     NewsFeed("TechCrunch", "https://techcrunch.com/feed/", NewsCategory.Tech),
+    // Hacker News's front page through hnrss.org, which, unlike HN's own feed, includes the text of Ask HN and Show HN posts.
+    NewsFeed("Hacker News", "https://hnrss.org/frontpage", NewsCategory.Tech),
 
     NewsFeed("The Conversation", "https://theconversation.com/us/articles.atom", NewsCategory.Science, fullText = true),
     NewsFeed("ScienceDaily", "https://www.sciencedaily.com/rss/all.xml", NewsCategory.Science),
@@ -223,9 +225,11 @@ class NewsRepository {
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
         )
 
-        // "Continue reading..." links (The Guardian) and "The post ... appeared first on ..." (WordPress).
+        // "Continue reading..." links (The Guardian), "The post ... appeared first on ..." (WordPress), and
+        // the links, points and comment count hnrss adds to every Hacker News item.
         val BOILERPLATE = Regex(
-            "<a\\b[^>]*>\\s*Continue reading\\.*\\s*</a>|<p>\\s*The post .*?appeared first on.*?</p>|<p>\\s*\\(Image credit:.*?\\)\\s*</p>",
+            "<a\\b[^>]*>\\s*Continue reading\\.*\\s*</a>|<p>\\s*The post .*?appeared first on.*?</p>|<p>\\s*\\(Image credit:.*?\\)\\s*</p>" +
+                "|<hr\\s*/?>|<p>\\s*(Article URL|Comments URL|Points|# Comments):.*?</p>",
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
         )
 
