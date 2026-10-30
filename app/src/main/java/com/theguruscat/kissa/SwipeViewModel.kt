@@ -363,8 +363,8 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
         if (visibleSince == null) visibleSince = SystemClock.elapsedRealtime()
         // Picks up what another phone changed while this one was away.
         if (restored && SystemClock.elapsedRealtime() - lastSyncAttempt > RESYNC_MS) viewModelScope.launch { runSync() }
-        // The app can sit in the background for days; news that went stale meanwhile leaves the deck.
-        if (restored && _state.value.deck.any { it.isStaleNews() }) {
+        // The app can sit in the background for days; news and Reddit posts that went stale meanwhile leave the deck.
+        if (restored && _state.value.deck.any { it.isStale() }) {
             _state.update { state -> state.copy(deck = state.deck.filter { state.allows(it) }) }
             refillIfLow()
         }
@@ -800,9 +800,9 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun SwipeUiState.allows(post: RedditPost): Boolean = when {
-        post.isNews -> post.subreddit in newsFeeds && !post.isStaleNews()
+        post.isNews -> post.subreddit in newsFeeds && !post.isStale()
         post.isOriginal -> true
-        else -> (showNsfw || !post.isNsfw) && subreddits.any { it.equals(post.subreddit, ignoreCase = true) }
+        else -> (showNsfw || !post.isNsfw) && !post.isStale() && subreddits.any { it.equals(post.subreddit, ignoreCase = true) }
     }
 
     private fun Map<String, DayStats>.adjustToday(stories: Int, seconds: Int): Map<String, DayStats> {

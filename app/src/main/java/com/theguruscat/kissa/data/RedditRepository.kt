@@ -77,10 +77,14 @@ class RedditRepository {
                 numComments = post.optInt("num_comments"),
                 permalink = post.getString("permalink"),
                 isNsfw = post.optBoolean("over_18"),
+                publishedAt = (post.optDouble("created_utc", 0.0) * 1000).toLong(),
             )
         }
     }
 }
+
+/** Reddit posts older than this leave the deck (liked ones stay), so cards saved days ago don't keep coming up. */
+const val REDDIT_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000L
 
 // Shorter posts are usually questions whose answers live in the comments.
 private const val MIN_BODY_LENGTH = 300

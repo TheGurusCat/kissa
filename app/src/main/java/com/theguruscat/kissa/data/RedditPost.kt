@@ -19,7 +19,7 @@ data class RedditPost(
     val permalink: String,
     val isNsfw: Boolean,
     val isNews: Boolean = false,
-    /** When the article was published, in epoch milliseconds; 0 for Reddit posts and unknown dates. */
+    /** When the post or article was published, in epoch milliseconds; 0 when unknown. */
     val publishedAt: Long = 0L,
     /** Written for Kissa and posted through the relay (the Stories tab), not from Reddit or a news site. */
     val isOriginal: Boolean = false,
@@ -67,9 +67,16 @@ data class RedditPost(
     /** Everything that marks this card as already read: its ID and, when there are ones, its [titleKey] and [bodyKey]. */
     val seenKeys: List<String> get() = listOfNotNull(id, titleKey, bodyKey)
 
-    /** A news article published more than [NEWS_MAX_AGE_MS] ago; articles without a date never go stale. */
-    fun isStaleNews(now: Long = System.currentTimeMillis()) =
-        isNews && publishedAt > 0L && now - publishedAt > NEWS_MAX_AGE_MS
+    /**
+     * A news article published more than [NEWS_MAX_AGE_MS] ago (articles without a date never go stale), or a
+     * Reddit post more than [REDDIT_MAX_AGE_MS] ago. Reddit cards saved before posts carried a date count as
+     * stale, so an old offline deck clears once.
+     */
+    fun isStale(now: Long = System.currentTimeMillis()) = when {
+        isNews -> publishedAt > 0L && now - publishedAt > NEWS_MAX_AGE_MS
+        isReddit -> now - publishedAt > REDDIT_MAX_AGE_MS
+        else -> false
+    }
 
     /** Estimated reading time at about 230 words per minute; computed once, since cards redraw often. */
     val readMinutes: Int by lazy {
