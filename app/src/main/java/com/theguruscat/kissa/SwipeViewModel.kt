@@ -196,8 +196,8 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
             }
             _state.update { state ->
                 state.copy(
-                    // Older versions could store the same story twice; one copy is kept.
-                    deck = (loaded.first + state.deck).distinctBy { it.titleKey ?: it.id }.filter { state.allows(it) },
+                    // Older versions could store the same story twice, or keep cards swiped just before the app closed.
+                    deck = (loaded.first + state.deck).unread().filter { state.allows(it) },
                     saved = loaded.second,
                     stats = loaded.third,
                     isRestored = true,
@@ -668,11 +668,8 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
 
         var added = 0
         _state.update { state ->
-            val inDeck = state.deck.flatMapTo(HashSet()) { it.seenKeys }
             // Skips stories already read or dealt, and the same story arriving twice in this round.
-            val fresh = posts
-                .filter { post -> post.seenKeys.none { it in seen || it in inDeck } && state.allows(post) }
-                .distinctBy { it.titleKey ?: it.id }
+            val fresh = posts.filter { state.allows(it) }.unread(dealt = state.deck)
             added = fresh.size
             state.copy(deck = (state.deck + fresh).take(MAX_DECK))
         }
@@ -793,6 +790,15 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * These cards without ones already swiped or in [dealt], keeping one copy of a story that appears
+     * more than once (by ID, title or body; see [RedditPost.seenKeys]).
+     */
+    private fun List<RedditPost>.unread(dealt: List<RedditPost> = emptyList()): List<RedditPost> {
+        val taken = dealt.flatMapTo(HashSet()) { it.seenKeys }
+        return filter { post -> post.seenKeys.none { it in seen || it in taken } && taken.addAll(post.seenKeys) }
+    }
+
     private fun SwipeUiState.allows(post: RedditPost): Boolean = when {
         post.isNews -> post.subreddit in newsFeeds && !post.isStaleNews()
         post.isOriginal -> true
@@ -834,11 +840,11 @@ class SwipeViewModel(app: Application) : AndroidViewModel(app) {
         private val SUBREDDIT_NAME = Regex("[A-Za-z0-9_]{2,21}")
         private const val MAX_UNDO = 30
         // Swiped-history keys sent with each upload; enough to keep a second phone from repeating recent cards.
-        private const val SYNCED_SEEN = 3000
+        private const val SYNCED_SEEN = 4500
         private const val RESYNC_MS = 60_000L
         private const val MAX_DECK = 1000
-        // Two keys per swiped story (ID and title), so about 5000 stories.
-        private const val MAX_SEEN = 10000
+        // Up to three keys per swiped story (ID, title and body), so about 5000 stories.
+        private const val MAX_SEEN = 15000
         private const val OFFLINE_ROUNDS = 3
         // Pages of 50 Kissa stories to look back through for unread ones.
         private const val ORIGINAL_PAGES = 5
